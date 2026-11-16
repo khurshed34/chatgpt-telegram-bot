@@ -16,14 +16,14 @@ from telegram.ext import (
     filters,
 )
 
-# =========================
+# ==============================
 # SETTINGS
-# =========================
+# ==============================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-MODEL = "gemini-3.8-flash"
+MODEL = "gemini-3.5-flash-lite"
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN дар GitHub Secrets ёфт нашуд!")
@@ -38,9 +38,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# =========================
-# START
-# =========================
+# ==============================
+# START COMMAND
+# ==============================
 
 async def start(
     update: Update,
@@ -50,17 +50,18 @@ async def start(
 
     text = (
         "Салом! 👋\n\n"
-        "Ман ёвари зеҳни сунъии ғайрирасмӣ ҳастам.\n"
-        "Метавонӣ савол диҳӣ, матн нависӣ ё тарҷума талаб кунӣ.\n\n"
+        "Ман ёвари зеҳни сунъии ғайрирасмӣ ҳастам.\n\n"
+        "Метавонӣ бо ман суҳбат кунӣ, савол диҳӣ, "
+        "матн нависӣ ё тарҷума талаб кунӣ.\n\n"
         "Барои оғози суҳбати нав фармони /reset-ро истифода бар."
     )
 
     await update.message.reply_text(text)
 
 
-# =========================
-# RESET
-# =========================
+# ==============================
+# RESET COMMAND
+# ==============================
 
 async def reset(
     update: Update,
@@ -73,9 +74,9 @@ async def reset(
     )
 
 
-# =========================
+# ==============================
 # SEND LONG TEXT
-# =========================
+# ==============================
 
 async def send_long_text(message, text):
     limit = 4000
@@ -84,15 +85,54 @@ async def send_long_text(message, text):
         await message.reply_text(text[i:i + limit])
 
 
-# =========================
-# CHAT WITH GEMINI
-# =========================
+# ==============================
+# GEMINI REQUEST WITH RETRIES
+# ==============================
+
+async def ask_gemini(prompt):
+    last_error = None
+
+    for attempt in range(3):
+        try:
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=2048,
+                    temperature=0.7
+                )
+            )
+
+            return response.text
+
+        except Exception as error:
+            last_error = error
+            logging.warning(
+                "Gemini attempt %s failed: %s",
+                attempt + 1,
+                error
+            )
+
+            if attempt < 2:
+                await asyncio.sleep(3 * (attempt + 1))
+
+    raise last_error
+
+
+# ==============================
+# CHAT MESSAGE
+# ==============================
 
 async def chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
     message = update.message
+
+    if not message or not message.text:
+        return
+
     user_text = message.text.strip()
 
     if not user_text:
@@ -110,8 +150,8 @@ async def chat(
         "text": user_text
     })
 
-    # Танҳо 10 навбати охир нигоҳ дошта мешавад
     history = history[-20:]
+    context.user_data["history"] = history
 
     conversation = ""
 
@@ -124,26 +164,21 @@ async def chat(
     prompt = (
         "Ту ёвари зеҳни сунъӣ ҳастӣ. "
         "Ба саволҳо равшан, боодобона ва муфид ҷавоб деҳ. "
-        "Агар корбар ба тоҷикӣ нависад, ба тоҷикӣ ҷавоб деҳ.\n\n"
+        "Агар корбар ба тоҷикӣ нависад, ба тоҷикӣ ҷавоб деҳ. "
+        "Агар ба русӣ нависад, ба русӣ ҷавоб деҳ. "
+        "Ҷавобҳоро фаҳмо ва дуруст навис.\n\n"
         + conversation
         + "\nЁвар:"
     )
 
     try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=2048,
-                temperature=0.7
-            )
-        )
-
-        answer = response.text
+        answer = await ask_gemini(prompt)
 
         if not answer:
-            answer = "Ҷавоб гирифта нашуд. Лутфан саволро дигар хел навис."
+            answer = (
+                "Ҷавоб гирифта нашуд. "
+                "Лутфан саволро дигар хел навис."
+            )
 
         history.append({
             "role": "assistant",
@@ -157,27 +192,33 @@ async def chat(
     except Exception:
         logging.exception("Gemini API error")
 
-        # Агар хато шавад, саволи охиринро аз таърих мегирем
+        history = context.user_data.get("history", [])
+
         if history and history[-1]["role"] == "user":
             history.pop()
 
         context.user_data["history"] = history[-20:]
 
         await message.reply_text(
-            "❌ Ҳангоми гирифтани ҷавоб хато шуд.\n"
-            "Баъдтар боз кӯшиш кун."
+            "❌ Ҳоло сервери зеҳни сунъӣ ҷавоб дода наметавонад.\n\n"
+            "Лутфан баъд аз чанд лаҳза боз кӯшиш кун."
         )
 
 
-# =========================
+# ==============================
 # MAIN
-# =========================
+# ==============================
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("reset", reset)
+    )
 
     app.add_handler(
         MessageHandler(
@@ -195,4 +236,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
