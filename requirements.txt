@@ -1,2 +1,2 @@
-python-telegram-bot
-openai
+python-telegram-bot>=21,<23
+google-genai>=1,<3
