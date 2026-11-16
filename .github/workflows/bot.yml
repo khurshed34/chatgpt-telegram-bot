@@ -7,11 +7,11 @@ on:
     branches:
       - main
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 */6 * * *"
 
 concurrency:
   group: chatgpt-telegram-bot
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run-bot:
@@ -33,5 +33,5 @@ jobs:
       - name: Start bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
