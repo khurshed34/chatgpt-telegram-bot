@@ -1,7 +1,6 @@
 
 import os
 import io
-import re
 import asyncio
 import logging
 import sqlite3
@@ -28,9 +27,9 @@ from telegram.ext import (
     filters,
 )
 
-# ==================================
+# =====================================
 # SETTINGS
-# ==================================
+# =====================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -54,13 +53,13 @@ if ADMIN_ID == 0:
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# ==================================
+# =====================================
 # DATABASE
-# ==================================
+# =====================================
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
@@ -73,7 +72,7 @@ def init_db():
 def save_user(user_id):
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            "INSERT OR IGNORE INTO users VALUES (?)",
             (user_id,)
         )
 
@@ -82,7 +81,6 @@ def get_users():
         rows = conn.execute(
             "SELECT user_id FROM users"
         ).fetchall()
-
     return [row[0] for row in rows]
 
 def get_user_count():
@@ -91,9 +89,9 @@ def get_user_count():
             "SELECT COUNT(*) FROM users"
         ).fetchone()[0]
 
-# ==================================
+# =====================================
 # ADMIN
-# ==================================
+# =====================================
 
 def is_admin(user_id):
     return user_id == ADMIN_ID
@@ -114,38 +112,34 @@ def admin_keyboard():
         ]
     ])
 
-# ==================================
-# DATE AND TIME
-# ==================================
+# =====================================
+# TIME
+# =====================================
 
 def current_time():
-    now = datetime.now(TIMEZONE)
-
-    return now.strftime(
+    return datetime.now(TIMEZONE).strftime(
         "%d-%m-%Y %H:%M:%S"
     )
 
-# ==================================
+# =====================================
 # START
-# ==================================
+# =====================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = update.effective_user
-
     save_user(user.id)
 
     context.user_data["history"] = []
+    context.user_data["broadcast_mode"] = False
 
     text = (
         "Салом! 👋\n\n"
         "Ман ёвари зеҳни сунъӣ ҳастам.\n\n"
         "💬 Ба ман савол фирист.\n"
         "🌍 Бо забонҳои гуногун суҳбат мекунам.\n"
-        "🔎 Маълумоти навро ҷустуҷӯ мекунам.\n"
         "🖼️ Сурат фирист, ман онро таҳлил мекунам.\n"
         "🎨 Суратро бо Prompt таҳрир мекунам.\n"
-        "🕒 Сана ва вақти Тоҷикистонро медонам.\n\n"
+        "🔎 Ба саволҳо ҷавоб медиҳам.\n\n"
         "Барои суҳбати нав: /reset"
     )
 
@@ -157,24 +151,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text)
 
-# ==================================
+# =====================================
 # RESET
-# ==================================
+# =====================================
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     context.user_data["history"] = []
 
     await update.message.reply_text(
         "✅ Суҳбати нав оғоз шуд!"
     )
 
-# ==================================
+# =====================================
 # ADMIN PANEL
-# ==================================
+# =====================================
 
 async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not is_admin(update.effective_user.id):
         return
 
@@ -183,12 +175,11 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=admin_keyboard()
     )
 
-# ==================================
-# STATS
-# ==================================
+# =====================================
+# STATISTICS
+# =====================================
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
@@ -205,12 +196,11 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👥 Ҳамагӣ корбарон: {get_user_count()}"
     )
 
-# ==================================
+# =====================================
 # BROADCAST START
-# ==================================
+# =====================================
 
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
@@ -226,16 +216,15 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.reply_text(
         "📢 Паёми худро фирист.\n\n"
-        "Матн, сурат ё видео фиристода метавонӣ.\n"
+        "Метавонӣ матн, сурат ё видео фиристӣ.\n"
         "Барои бекор кардан: /cancel"
     )
 
-# ==================================
+# =====================================
 # CANCEL
-# ==================================
+# =====================================
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not is_admin(update.effective_user.id):
         return
 
@@ -245,17 +234,15 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ Паёмгузорӣ бекор шуд."
     )
 
-# ==================================
+# =====================================
 # BROADCAST
-# ==================================
+# =====================================
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not is_admin(update.effective_user.id):
         return
 
     users = get_users()
-
     sent = 0
     failed = 0
 
@@ -264,24 +251,20 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     for user_id in users:
-
         try:
             await context.bot.copy_message(
                 chat_id=user_id,
                 from_chat_id=update.effective_chat.id,
                 message_id=update.message.message_id
             )
-
             sent += 1
 
         except Exception as error:
-
             logging.warning(
                 "Broadcast failed for %s: %s",
                 user_id,
                 error
             )
-
             failed += 1
 
         await asyncio.sleep(0.05)
@@ -291,121 +274,88 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await status.edit_text(
         "✅ ПАЁМГУЗОРӢ БА ОХИР РАСИД!\n\n"
         f"📨 Фиристода шуд: {sent}\n"
-        f"❌ Хато: {failed}\n"
+        f"❌ Фиристода нашуд: {failed}\n"
         f"👥 Ҳамагӣ: {len(users)}"
     )
 
-# ==================================
-# SEND LONG TEXT
-# ==================================
+# =====================================
+# LONG TEXT
+# =====================================
 
 async def send_long_text(message, text):
-
     limit = 4000
 
     for i in range(0, len(text), limit):
-
         await message.reply_text(
             text[i:i + limit]
         )
 
-# ==================================
+# =====================================
 # GEMINI TEXT
-# ==================================
+# =====================================
 
-async def ask_gemini(prompt, history):
+async def ask_gemini(user_text, history):
 
     contents = []
 
     for item in history[-16:]:
+        contents.append(
+            types.Content(
+                role=item["role"],
+                parts=[
+                    types.Part.from_text(
+                        text=item["text"]
+                    )
+                ]
+            )
+        )
 
-        contents.append({
-            "role": item["role"],
-            "parts": [
-                {"text": item["text"]}
+    contents.append(
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=user_text
+                )
             ]
-        })
-
-    contents.append({
-        "role": "user",
-        "parts": [
-            {"text": prompt}
-        ]
-    })
-
-    now = current_time()
+        )
+    )
 
     config = types.GenerateContentConfig(
-
         system_instruction=(
-            "Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ. "
-
-            "Қоидаҳо:\n"
-            "1. Ба забони корбар ҷавоб деҳ.\n"
-            "2. Забони аввалини корбарро муайян кун.\n"
-            "3. Агар корбар забонро иваз кунад, ту ҳам иваз кун.\n"
-            "4. Ҷавобҳоро равшан, дақиқ ва фаҳмо навис.\n"
-            "5. Маълумоти сохта насоз.\n"
-            "6. Агар ҷавобро надонӣ, рост бигӯ.\n"
-            "7. Барои маълумоти нав Google Search-ро истифода бар.\n"
-            "8. Барои масъалаҳои душвор бодиққат таҳлил кун.\n"
-            "9. Ба саволҳои оддӣ ҷавоби кӯтоҳ деҳ.\n"
-            "10. Контексти суҳбати пешинаро нигоҳ дор.\n\n"
-
-            f"Сана ва вақти Тоҷикистон: {now}.\n"
-            "Минтақаи вақт: Asia/Dushanbe (UTC+5)."
+            "Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ.\n"
+            "Ба забони корбар ҷавоб деҳ.\n"
+            "Агар корбар забонро иваз кунад, ту ҳам иваз кун.\n"
+            "Ҷавобҳоро равшан ва дақиқ навис.\n"
+            "Маълумоти сохта насоз.\n"
+            "Агар ҷавобро надонӣ, рост бигӯ.\n"
+            "Ба саволҳои оддӣ кӯтоҳ ҷавоб деҳ.\n"
+            "Ба саволҳои душвор муфассал ҷавоб деҳ.\n"
+            "Таърихи суҳбатро ба назар гир.\n"
+            f"Вақти Тоҷикистон: {current_time()}."
         ),
-
-        tools=[
-            types.Tool(
-                google_search=types.GoogleSearch()
-            )
-        ],
-
         max_output_tokens=4096
     )
 
-    last_error = None
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model=TEXT_MODEL,
+        contents=contents,
+        config=config
+    )
 
-    for attempt in range(3):
+    if not response.text:
+        raise RuntimeError(
+            "Gemini ҷавоби матнӣ барнагардонд."
+        )
 
-        try:
+    return response.text
 
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=TEXT_MODEL,
-                contents=contents,
-                config=config
-            )
+# =====================================
+# IMAGE ANALYSIS
+# =====================================
 
-            if response.text:
-                return response.text
-
-            raise RuntimeError(
-                "Gemini ҷавоби холӣ баргардонд."
-            )
-
-        except Exception as error:
-
-            last_error = error
-
-            logging.exception(
-                "Gemini text attempt %s failed",
-                attempt + 1
-            )
-
-            if attempt < 2:
-                await asyncio.sleep(
-                    3 * (attempt + 1)
-                )
-
-    raise last_error
-
-# ==================================
-# GEMINI IMAGE ANALYSIS
-# ==================================
-
-async def analyze_image(image_bytes, mime_type, question):
+async def analyze_image(image_bytes, mime_type):
 
     image_part = types.Part.from_bytes(
         data=image_bytes,
@@ -414,33 +364,29 @@ async def analyze_image(image_bytes, mime_type, question):
 
     response = await asyncio.to_thread(
         client.models.generate_content,
-
         model=TEXT_MODEL,
-
         contents=[
-            question,
+            "Ин суратро таҳлил кун. "
+            "Ба забони корбар ҷавоб деҳ. "
+            "Он чизеро, ки равшан дида мешавад, шарҳ деҳ. "
+            "Агар чизе норавшан бошад, тахминро ҳамчун факт нанавис.",
             image_part
         ],
-
         config=types.GenerateContentConfig(
-
-            system_instruction=(
-                "Ту мутахассиси таҳлили тасвир ҳастӣ. "
-                "Ба забони корбар ҷавоб деҳ. "
-                "Чизҳои дар сурат дидашударо шарҳ деҳ. "
-                "Агар чизе норавшан бошад, рост бигӯ. "
-                "Маълумоти сохта насоз."
-            ),
-
             max_output_tokens=2048
         )
     )
 
-    return response.text or "Ҷавоби тасвир гирифта нашуд."
+    if not response.text:
+        raise RuntimeError(
+            "Gemini суратро таҳлил карда натавонист."
+        )
 
-# ==================================
+    return response.text
+
+# =====================================
 # IMAGE EDITING
-# ==================================
+# =====================================
 
 async def edit_image(image_bytes, mime_type, prompt):
 
@@ -449,50 +395,37 @@ async def edit_image(image_bytes, mime_type, prompt):
         mime_type=mime_type
     )
 
-    edit_prompt = (
-        "Тасвири фиристодашударо мувофиқи фармони корбар таҳрир кун. "
-
-        "Агар дар акс шахс бошад, шахсияти аслии ӯро "
-        "то ҳадди имкон нигоҳ дор. "
-
-        "Шакли чеҳра, чашм, бинӣ, лаб, гӯш, ранги пӯст, "
-        "мӯй ва хусусиятҳои шинохташавандаро тағйир надеҳ. "
-
-        "Чеҳраро бо шахси дигар иваз накун. "
-
-        "Танҳо тағйироте, ки корбар талаб кардааст, иҷро кун. "
-
-        "Фармони корбар: " + prompt
+    instruction = (
+        "Edit the supplied image according to this user prompt:\n"
+        + prompt
+        + "\nPreserve the original person's identity and facial "
+        "features as closely as possible. Do not replace the person. "
+        "Only make the requested changes."
     )
 
     response = await asyncio.to_thread(
         client.models.generate_content,
-
         model=IMAGE_MODEL,
-
         contents=[
-            edit_prompt,
+            instruction,
             image_part
         ],
-
         config=types.GenerateContentConfig(
             response_modalities=["TEXT", "IMAGE"]
         )
     )
 
     for part in response.parts:
-
         if part.inline_data and part.inline_data.data:
-
             return bytes(part.inline_data.data)
 
     raise RuntimeError(
-        "Модели тасвир натиҷаи тасвирӣ барнагардонд."
+        "Модели тасвирӣ натиҷаи тасвирӣ надод."
     )
 
-# ==================================
+# =====================================
 # HANDLE TEXT
-# ==================================
+# =====================================
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -520,19 +453,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         []
     )
 
-    now = current_time()
-
-    prompt = (
-        f"Вақти воқеии Тоҷикистон: {now}.\n"
-        "Агар савол дар бораи сана ё вақт бошад, "
-        "аз ҳамин маълумот истифода бар.\n\n"
-        + user_text
-    )
-
     try:
-
         answer = await ask_gemini(
-            prompt,
+            user_text,
             history
         )
 
@@ -553,21 +476,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             answer
         )
 
-    except Exception:
+    except Exception as error:
 
         logging.exception(
-            "Gemini text error"
+            "GEMINI_TEXT_ERROR"
         )
 
         await message.reply_text(
-            "❌ Ҳоло Gemini ҷавоб дода наметавонад.\n\n"
-            "Эҳтимол мушкили API, модели Gemini ё маҳдудияти истифода бошад.\n"
+            "❌ Gemini ҷавоб дода натавонист.\n\n"
+            f"Сабаби хатогӣ дар GitHub Actions сабт шуд:\n"
+            f"{type(error).__name__}\n\n"
             "Баъдтар боз кӯшиш кун."
         )
 
-# ==================================
+# =====================================
 # HANDLE PHOTO
-# ==================================
+# =====================================
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -581,7 +505,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-
         photo = message.photo[-1]
 
         telegram_file = await context.bot.get_file(
@@ -595,7 +518,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (message.caption or "").strip()
 
         if caption:
-
             await context.bot.send_chat_action(
                 chat_id=message.chat_id,
                 action=ChatAction.UPLOAD_PHOTO
@@ -612,11 +534,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     io.BytesIO(result),
                     filename="edited_image.png"
                 ),
-                caption="✅ Таҳрири сурат анҷом ёфт!"
+                caption="✅ Сурат таҳрир шуд!"
             )
 
         else:
-
             await context.bot.send_chat_action(
                 chat_id=message.chat_id,
                 action=ChatAction.TYPING
@@ -624,9 +545,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             answer = await analyze_image(
                 image_bytes,
-                "image/jpeg",
-                "Ин суратро таҳлил кун. "
-                "Ба забони корбар ҷавоб деҳ."
+                "image/jpeg"
             )
 
             await send_long_text(
@@ -634,22 +553,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 answer
             )
 
-    except Exception:
+    except Exception as error:
 
         logging.exception(
-            "Photo processing error"
+            "GEMINI_IMAGE_ERROR"
         )
 
         await message.reply_text(
             "❌ Сурат коркард нашуд.\n\n"
-            "Лутфан баъдтар кӯшиш кун."
+            f"Сабаби хатогӣ: {type(error).__name__}"
         )
 
-# ==================================
+# =====================================
 # OTHER MEDIA
-# ==================================
+# =====================================
 
 async def handle_other_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message:
+        return
 
     user_id = update.effective_user.id
 
@@ -660,26 +582,25 @@ async def handle_other_media(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     await update.message.reply_text(
-        "📌 Ҳоло матн ва суратро қабул карда метавонам.\n\n"
+        "📌 Ҳоло ман матн ва суратро қабул мекунам.\n\n"
         "Барои таҳлили сурат онро бе матн фирист.\n"
-        "Барои таҳрир суратро бо Prompt фирист."
+        "Барои таҳрири сурат онро бо Prompt фирист."
     )
 
-# ==================================
+# =====================================
 # ERROR HANDLER
-# ==================================
+# =====================================
 
 async def error_handler(update, context):
 
-    logging.error(
-        "Unhandled error: %s",
-        context.error,
+    logging.exception(
+        "UNHANDLED BOT ERROR",
         exc_info=context.error
     )
 
-# ==================================
+# =====================================
 # MAIN
-# ==================================
+# =====================================
 
 def main():
 
@@ -742,12 +663,10 @@ def main():
         )
     )
 
-    app.add_error_handler(
-        error_handler
-    )
+    app.add_error_handler(error_handler)
 
     logging.info(
-        "Telegram AI Bot started!"
+        "TELEGRAM AI BOT STARTED SUCCESSFULLY"
     )
 
     app.run_polling(
