@@ -1,7 +1,6 @@
 
 import os
 import io
-import time
 import asyncio
 import logging
 import sqlite3
@@ -37,6 +36,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 TEXT_MODEL = "gemini-3.8-flash"
+FALLBACK_TEXT_MODEL = "gemini-3.5-flash-lite"
 IMAGE_MODEL = "gemini-nano-banana-2.1"
 
 DB_FILE = "bot_database.db"
@@ -58,8 +58,9 @@ logging.basicConfig(
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+
 # =====================================
-# GEMINI RETRY SYSTEM
+# GEMINI ERROR CHECK
 # =====================================
 
 def is_retryable(error):
@@ -90,65 +91,99 @@ def is_retryable(error):
     return False
 
 
-async def gemini_request(model, contents, config=None):
-    max_attempts = 4
+# =====================================
+# GEMINI REQUEST WITH FALLBACK
+# =====================================
 
-    for attempt in range(1, max_attempts + 1):
-        try:
-            logging.info(
-                "Gemini request: model=%s attempt=%s/%s",
-                model,
-                attempt,
-                max_attempts
-            )
+async def gemini_request(
+    model,
+    contents,
+    config=None,
+    fallback_model=None
+):
 
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model,
-                contents=contents,
-                config=config
-            )
+    models_to_try = [model]
 
-            logging.info(
-                "Gemini response received: model=%s",
-                model
-            )
+    if fallback_model and fallback_model != model:
+        models_to_try.append(fallback_model)
 
-            return response
+    for selected_model in models_to_try:
 
-        except Exception as error:
+        max_attempts = 3
 
-            if (
-                attempt >= max_attempts
-                or not is_retryable(error)
-            ):
-                logging.exception(
-                    "GEMINI REQUEST FAILED: model=%s",
-                    model
+        for attempt in range(1, max_attempts + 1):
+
+            try:
+                logging.info(
+                    "Gemini request: model=%s attempt=%s/%s",
+                    selected_model,
+                    attempt,
+                    max_attempts
                 )
-                raise
 
-            wait_seconds = min(2 ** attempt, 12)
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=selected_model,
+                    contents=contents,
+                    config=config
+                )
 
+                logging.info(
+                    "Gemini response received: model=%s",
+                    selected_model
+                )
+
+                return response
+
+            except Exception as error:
+
+                logging.warning(
+                    "Gemini error: model=%s error=%s",
+                    selected_model,
+                    type(error).__name__
+                )
+
+                if not is_retryable(error):
+                    logging.exception(
+                        "Non-retryable Gemini error"
+                    )
+                    raise
+
+                if attempt >= max_attempts:
+                    logging.exception(
+                        "Gemini model failed: %s",
+                        selected_model
+                    )
+                    break
+
+                wait_seconds = min(2 ** attempt, 12)
+
+                logging.warning(
+                    "Retry after %s seconds",
+                    wait_seconds
+                )
+
+                await asyncio.sleep(wait_seconds)
+
+        if selected_model != models_to_try[-1]:
             logging.warning(
-                "Gemini temporary error: %s. "
-                "Retry %s/%s after %s seconds.",
-                type(error).__name__,
-                attempt,
-                max_attempts,
-                wait_seconds
+                "Switching to fallback model: %s",
+                models_to_try[models_to_try.index(selected_model) + 1]
             )
 
-            await asyncio.sleep(wait_seconds)
+    raise RuntimeError(
+        "Модели асосӣ ва эҳтиётии Gemini ҷавоб надоданд."
+    )
 
-    raise RuntimeError("Gemini ҷавоб надод.")
 
 # =====================================
 # DATABASE
 # =====================================
 
 def init_db():
+
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY
@@ -157,7 +192,9 @@ def init_db():
 
 
 def save_user(user_id):
+
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.execute(
             "INSERT OR IGNORE INTO users VALUES (?)",
             (user_id,)
@@ -165,7 +202,9 @@ def save_user(user_id):
 
 
 def get_users():
+
     with sqlite3.connect(DB_FILE) as conn:
+
         rows = conn.execute(
             "SELECT user_id FROM users"
         ).fetchall()
@@ -174,7 +213,9 @@ def get_users():
 
 
 def get_user_count():
+
     with sqlite3.connect(DB_FILE) as conn:
+
         return conn.execute(
             "SELECT COUNT(*) FROM users"
         ).fetchone()[0]
@@ -189,6 +230,7 @@ def is_admin(user_id):
 
 
 def admin_keyboard():
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
@@ -210,6 +252,7 @@ def admin_keyboard():
 # =====================================
 
 def current_time():
+
     return datetime.now(TIMEZONE).strftime(
         "%d-%m-%Y %H:%M:%S"
     )
@@ -220,6 +263,7 @@ def current_time():
 # =====================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user
 
     save_user(user.id)
@@ -239,11 +283,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if is_admin(user.id):
+
         await update.message.reply_text(
             text + "\n\n⚙️ Панели админ:",
             reply_markup=admin_keyboard()
         )
+
     else:
+
         await update.message.reply_text(text)
 
 
@@ -252,6 +299,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     context.user_data["history"] = []
 
     await update.message.reply_text(
@@ -264,6 +312,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not is_admin(update.effective_user.id):
         return
 
@@ -278,13 +327,16 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
+
         await query.answer(
             "Дастрасӣ иҷозат нест!",
             show_alert=True
         )
+
         return
 
     await query.answer()
@@ -300,13 +352,16 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
+
         await query.answer(
             "Дастрасӣ иҷозат нест!",
             show_alert=True
         )
+
         return
 
     await query.answer()
@@ -325,6 +380,7 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not is_admin(update.effective_user.id):
         return
 
@@ -340,10 +396,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not is_admin(update.effective_user.id):
         return
 
     users = get_users()
+
     sent = 0
     failed = 0
 
@@ -352,19 +410,24 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     for user_id in users:
+
         try:
+
             await context.bot.copy_message(
                 chat_id=user_id,
                 from_chat_id=update.effective_chat.id,
                 message_id=update.message.message_id
             )
+
             sent += 1
 
         except Exception:
+
             logging.exception(
                 "Broadcast failed for user %s",
                 user_id
             )
+
             failed += 1
 
         await asyncio.sleep(0.05)
@@ -384,9 +447,11 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =====================================
 
 async def send_long_text(message, text):
+
     limit = 4000
 
     for i in range(0, len(text), limit):
+
         await message.reply_text(
             text[i:i + limit]
         )
@@ -401,6 +466,7 @@ async def ask_gemini(user_text, history):
     contents = []
 
     for item in history[-16:]:
+
         contents.append(
             types.Content(
                 role=item["role"],
@@ -428,12 +494,14 @@ async def ask_gemini(user_text, history):
             "Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ.\n"
             "Ба забони корбар ҷавоб деҳ.\n"
             "Агар корбар забонро иваз кунад, ту ҳам иваз кун.\n"
-            "Ҷавобҳоро равшан ва дақиқ навис.\n"
+            "Ҷавобҳоро равшан, дақиқ ва фаҳмо навис.\n"
             "Маълумоти сохта насоз.\n"
             "Агар ҷавобро надонӣ, рост бигӯ.\n"
             "Ба саволҳои оддӣ кӯтоҳ ҷавоб деҳ.\n"
             "Ба саволҳои душвор муфассал ҷавоб деҳ.\n"
             "Таърихи суҳбатро ба назар гир.\n"
+            "Агар савол ба маълумоти нав вобаста бошад ва "
+            "манбаи боэътимод надошта бошӣ, инро равшан бигӯ.\n"
             f"Вақти Тоҷикистон: {current_time()}."
         ),
         max_output_tokens=4096
@@ -442,10 +510,12 @@ async def ask_gemini(user_text, history):
     response = await gemini_request(
         model=TEXT_MODEL,
         contents=contents,
-        config=config
+        config=config,
+        fallback_model=FALLBACK_TEXT_MODEL
     )
 
     if not response.text:
+
         raise RuntimeError(
             "Gemini ҷавоби матнӣ барнагардонд."
         )
@@ -475,10 +545,12 @@ async def analyze_image(image_bytes, mime_type):
         ],
         config=types.GenerateContentConfig(
             max_output_tokens=2048
-        )
+        ),
+        fallback_model=FALLBACK_TEXT_MODEL
     )
 
     if not response.text:
+
         raise RuntimeError(
             "Gemini суратро таҳлил карда натавонист."
         )
@@ -500,11 +572,12 @@ async def edit_image(image_bytes, mime_type, prompt):
     instruction = (
         "Edit the supplied image according to this user prompt:\n"
         + prompt
-        + "\nPreserve the original person's identity. "
+        + "\nPreserve the original person's identity exactly. "
         "Keep the same face shape, eyes, eyebrows, nose, lips, "
         "ears, jawline, skin tone, hairstyle, hairline, facial hair, "
         "facial proportions and expression. "
-        "Do not beautify, replace, redesign or stylize the face. "
+        "Do not beautify, replace, redesign, age, de-age "
+        "or stylize the face. "
         "Only make the requested changes to the background, "
         "clothes, lighting, colors, camera angle or environment."
     )
@@ -521,7 +594,9 @@ async def edit_image(image_bytes, mime_type, prompt):
     )
 
     for part in response.parts:
+
         if part.inline_data and part.inline_data.data:
+
             return bytes(part.inline_data.data)
 
     raise RuntimeError(
@@ -546,6 +621,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if is_admin(user_id) and context.user_data.get("broadcast_mode"):
+
         await broadcast(update, context)
         return
 
@@ -565,6 +641,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+
         answer = await ask_gemini(
             user_text,
             history
@@ -594,7 +671,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             "❌ Gemini ҳоло ҷавоб дода натавонист.\n\n"
             f"Навъи хато: {type(error).__name__}\n\n"
-            "Ман дархостро чанд маротиба такрор кардам. "
+            "Модели асосӣ ва эҳтиётӣ санҷида шуданд. "
             "Лутфан баъдтар боз кӯшиш кун."
         )
 
@@ -616,10 +693,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if is_admin(user_id) and context.user_data.get("broadcast_mode"):
+
         await broadcast(update, context)
         return
 
     try:
+
         photo = message.photo[-1]
 
         telegram_file = await context.bot.get_file(
@@ -633,6 +712,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (message.caption or "").strip()
 
         if caption:
+
             await context.bot.send_chat_action(
                 chat_id=message.chat_id,
                 action=ChatAction.UPLOAD_PHOTO
@@ -653,6 +733,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         else:
+
             await context.bot.send_chat_action(
                 chat_id=message.chat_id,
                 action=ChatAction.TYPING
@@ -693,6 +774,7 @@ async def handle_other_media(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_user(user_id)
 
     if is_admin(user_id) and context.user_data.get("broadcast_mode"):
+
         await broadcast(update, context)
         return
 
