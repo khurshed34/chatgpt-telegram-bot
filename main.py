@@ -41,6 +41,9 @@ GEMINI_MODEL = "gemini-3.8-flash"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
 GROQ_MODEL = "openai/gpt-oss-120b"
 
+AI_TIMEOUT = 18
+IMAGE_TIMEOUT = 25
+
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN ёфт нашуд!")
 
@@ -402,14 +405,17 @@ async def ask_groq(prompt):
 def get_providers():
     providers = []
 
-    if gemini:
-        providers.append(("Gemini", ask_gemini))
-
+    # Аввал Groq — барои ҷавоби тез
     if groq_client:
         providers.append(("Groq", ask_groq))
 
+    # Дуюм OpenAI
     if openai_client:
         providers.append(("OpenAI", ask_openai))
+
+    # Сеюм Gemini
+    if gemini:
+        providers.append(("Gemini", ask_gemini))
 
     return providers
 
@@ -430,7 +436,7 @@ async def ask_one_ai(prompt):
 
             answer = await asyncio.wait_for(
                 function(prompt),
-                timeout=75
+                timeout=AI_TIMEOUT
             )
 
             if answer and answer.strip():
@@ -440,7 +446,17 @@ async def ask_one_ai(prompt):
                 )
                 return answer.strip()
 
-            logging.warning("%s returned empty answer", name)
+            logging.warning(
+                "%s returned empty answer",
+                name
+            )
+
+        except asyncio.TimeoutError:
+            logging.warning(
+                "%s timeout after %s seconds",
+                name,
+                AI_TIMEOUT
+            )
 
         except Exception as error:
             logging.warning(
@@ -465,7 +481,7 @@ async def ask_all_ai(prompt):
     tasks = [
         asyncio.wait_for(
             function(prompt),
-            timeout=75
+            timeout=AI_TIMEOUT
         )
         for name, function in providers
     ]
@@ -488,6 +504,10 @@ async def ask_all_ai(prompt):
             continue
 
         if result and result.strip():
+            logging.info(
+                "%s answered successfully",
+                name
+            )
             answers.append(
                 (name, result.strip())
             )
@@ -699,9 +719,12 @@ async def handle_photo(update, context):
             "Бо забони истифодабаранда ҷавоб деҳ."
         )
 
-        answer = await ask_gemini_image(
-            image_bytes,
-            question
+        answer = await asyncio.wait_for(
+            ask_gemini_image(
+                image_bytes,
+                question
+            ),
+            timeout=IMAGE_TIMEOUT
         )
 
         if not answer:
@@ -710,6 +733,14 @@ async def handle_photo(update, context):
         await send_long_text(
             message,
             answer
+        )
+
+    except asyncio.TimeoutError:
+        logging.warning("Image analysis timed out")
+
+        await message.reply_text(
+            "⏳ Таҳлили сурат вақт гирифт. "
+            "Лутфан боз кӯшиш кун."
         )
 
     except Exception:
@@ -819,9 +850,7 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logging.info(
-        "Three AI Telegram bot started!"
-    )
+    logging.info("Three AI Telegram bot started!")
 
     logging.info(
         "Active AI providers: %s",
