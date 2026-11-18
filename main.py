@@ -21,7 +21,6 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ContextTypes,
     filters,
 )
 
@@ -805,7 +804,6 @@ def main():
         pool_timeout=30
     )
 
-    # Ислоҳ: bootstrap_retries хориҷ карда шуд.
     app = (
         Application.builder()
         .token(BOT_TOKEN)
@@ -814,21 +812,10 @@ def main():
         .build()
     )
 
-    app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    app.add_handler(
-        CommandHandler("reset", reset)
-    )
-
-    app.add_handler(
-        CommandHandler("panel", panel)
-    )
-
-    app.add_handler(
-        CommandHandler("cancel", cancel)
-    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("panel", panel))
+    app.add_handler(CommandHandler("cancel", cancel))
 
     app.add_handler(
         CallbackQueryHandler(
@@ -845,10 +832,7 @@ def main():
     )
 
     app.add_handler(
-        MessageHandler(
-            filters.PHOTO,
-            handle_photo
-        )
+        MessageHandler(filters.PHOTO, handle_photo)
     )
 
     app.add_handler(
@@ -874,8 +858,10 @@ def main():
         [name for name, function in get_providers()]
     )
 
+    # Кӯшиши такрорӣ ҳангоми хатои муваққатии Telegram
     app.run_polling(
-        drop_pending_updates=True
+        drop_pending_updates=True,
+        bootstrap_retries=10
     )
 
 
