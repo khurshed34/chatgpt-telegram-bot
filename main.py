@@ -38,8 +38,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DB_FILE = "bot_database.db"
 
 GEMINI_MODEL = "gemini-3.8-flash"
-OPENAI_MODEL = "gpt-5.5"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN ёфт нашуд!")
@@ -50,20 +50,9 @@ if ADMIN_ID == 0:
 if not any([GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY]):
     raise RuntimeError("Ягон AI API фаъол нест!")
 
-gemini = (
-    genai.Client(api_key=GEMINI_API_KEY)
-    if GEMINI_API_KEY else None
-)
-
-openai_client = (
-    OpenAI(api_key=OPENAI_API_KEY)
-    if OPENAI_API_KEY else None
-)
-
-groq_client = (
-    Groq(api_key=GROQ_API_KEY)
-    if GROQ_API_KEY else None
-)
+gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -145,7 +134,10 @@ async def show_stats(update, context):
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
-        await query.answer("Дастрасӣ иҷозат нест!", show_alert=True)
+        await query.answer(
+            "Дастрасӣ иҷозат нест!",
+            show_alert=True
+        )
         return
 
     await query.answer()
@@ -160,7 +152,10 @@ async def start_broadcast(update, context):
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
-        await query.answer("Дастрасӣ иҷозат нест!", show_alert=True)
+        await query.answer(
+            "Дастрасӣ иҷозат нест!",
+            show_alert=True
+        )
         return
 
     await query.answer()
@@ -229,7 +224,7 @@ async def start(update, context):
 
     text = (
         "Салом! 👋\n\n"
-        "Ман ёвари зеҳни сунъӣ ҳастам.\n\n"
+        "Ман ёвари зеҳни сунъии бисёрзабона ҳастам.\n\n"
         "💬 Ба ман савол фирист.\n"
         "🖼️ Сурат фирист, ман онро таҳлил мекунам.\n\n"
         "🌍 Бо забони худат навис — "
@@ -261,10 +256,10 @@ async def reset(update, context):
 SYSTEM_PROMPT = """
 Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ.
 
-ҚОИДАҲОИ МУҲИМ:
+ҚОИДАҲО:
 
 1. Забони паёми охирини корбарро муайян кун.
-2. Ҷавобро ҳатман бо ҳамон забон навис.
+2. Ҳатман бо ҳамон забон ҷавоб деҳ.
 3. Тоҷикӣ бошад — тоҷикӣ.
 4. Русӣ бошад — русӣ.
 5. Англисӣ бошад — англисӣ.
@@ -329,7 +324,7 @@ def gemini_request(prompt):
         )
     )
 
-    return response.text
+    return response.text or ""
 
 
 async def ask_gemini(prompt):
@@ -337,7 +332,8 @@ async def ask_gemini(prompt):
         raise RuntimeError("Gemini API нест.")
 
     return await asyncio.to_thread(
-        gemini_request, prompt
+        gemini_request,
+        prompt
     )
 
 
@@ -346,22 +342,14 @@ async def ask_gemini(prompt):
 # ==================================
 
 def openai_request(prompt):
-    response = openai_client.chat.completions.create(
+    response = openai_client.responses.create(
         model=OPENAI_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        max_completion_tokens=2048
+        instructions=SYSTEM_PROMPT,
+        input=prompt,
+        max_output_tokens=2048
     )
 
-    return response.choices[0].message.content
+    return response.output_text or ""
 
 
 async def ask_openai(prompt):
@@ -369,7 +357,8 @@ async def ask_openai(prompt):
         raise RuntimeError("OpenAI API нест.")
 
     return await asyncio.to_thread(
-        openai_request, prompt
+        openai_request,
+        prompt
     )
 
 
@@ -390,11 +379,10 @@ def groq_request(prompt):
                 "content": prompt
             }
         ],
-        max_tokens=2048,
-        temperature=0.5
+        max_completion_tokens=2048
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""
 
 
 async def ask_groq(prompt):
@@ -402,46 +390,83 @@ async def ask_groq(prompt):
         raise RuntimeError("Groq API нест.")
 
     return await asyncio.to_thread(
-        groq_request, prompt
+        groq_request,
+        prompt
     )
 
 
 # ==================================
-# AI PROVIDERS
+# PROVIDER LIST
+# ==================================
+
+def get_providers():
+    providers = []
+
+    if gemini:
+        providers.append(("Gemini", ask_gemini))
+
+    if groq_client:
+        providers.append(("Groq", ask_groq))
+
+    if openai_client:
+        providers.append(("OpenAI", ask_openai))
+
+    return providers
+
+
+# ==================================
+# AI FALLBACK SYSTEM
 # ==================================
 
 async def ask_one_ai(prompt):
-    providers = [
-        ("Gemini", ask_gemini),
-        ("Groq", ask_groq),
-        ("OpenAI", ask_openai)
-    ]
+    providers = get_providers()
+
+    if not providers:
+        raise RuntimeError("Ягон AI API фаъол нест.")
 
     for name, function in providers:
         try:
-            answer = await function(prompt)
+            logging.info("Trying %s...", name)
+
+            answer = await asyncio.wait_for(
+                function(prompt),
+                timeout=75
+            )
 
             if answer and answer.strip():
-                logging.info("%s answered successfully", name)
+                logging.info(
+                    "%s answered successfully",
+                    name
+                )
                 return answer.strip()
+
+            logging.warning("%s returned empty answer", name)
 
         except Exception as error:
             logging.warning(
-                "%s unavailable: %s", name, error
+                "%s unavailable: %s",
+                name,
+                error
             )
 
     raise RuntimeError("Ҳамаи AI-ҳо дастнорасанд.")
 
 
+# ==================================
+# MULTI AI ANALYSIS
+# ==================================
+
 async def ask_all_ai(prompt):
-    providers = [
-        ("Gemini", ask_gemini),
-        ("Groq", ask_groq),
-        ("OpenAI", ask_openai)
-    ]
+    providers = get_providers()
+
+    if not providers:
+        raise RuntimeError("Ягон AI API фаъол нест.")
 
     tasks = [
-        function(prompt)
+        asyncio.wait_for(
+            function(prompt),
+            timeout=75
+        )
         for name, function in providers
     ]
 
@@ -453,56 +478,53 @@ async def ask_all_ai(prompt):
     answers = []
 
     for (name, function), result in zip(providers, results):
+
         if isinstance(result, Exception):
             logging.warning(
-                "%s failed: %s", name, result
+                "%s failed: %s",
+                name,
+                result
             )
             continue
 
         if result and result.strip():
-            answers.append((name, result.strip()))
+            answers.append(
+                (name, result.strip())
+            )
 
     if not answers:
-        raise RuntimeError("Ҳеҷ яке аз AI-ҳо ҷавоб надод.")
+        raise RuntimeError(
+            "Ҳеҷ яке аз AI-ҳо ҷавоб надод."
+        )
 
-    # Агар танҳо як AI ҷавоб диҳад
     if len(answers) == 1:
         return answers[0][1]
 
-    # Ҷавобҳоро ҷамъ карда, муқоиса мекунем
     comparison = "\n\n".join(
         f"ҶАВОБИ {name}:\n{answer}"
         for name, answer in answers
     )
 
     final_prompt = (
-        SYSTEM_PROMPT
-        + "\n\n"
-        "Ҷавобҳои чанд AI-ро муқоиса кун. "
-        "Маълумоти дурустро нигоҳ дор. "
+        "Ҷавобҳои зеринро муқоиса кун.\n"
+        "Маълумоти дурустро нигоҳ дор.\n"
+        "Маълумоти беасосро қабул накун.\n"
         "Агар байни ҷавобҳо ихтилоф бошад, "
-        "онро бодиққат таҳлил кун. "
-        "Маълумоти беасосро қабул накун. "
+        "онро бодиққат таҳлил кун.\n"
         "Як ҷавоби ниҳоии равшан пешниҳод кун.\n\n"
         + comparison
     )
 
-    # AI-и дастрас ҷавоби ниҳоиро месозад
-    for name, function in providers:
-        try:
-            final_answer = await function(final_prompt)
+    try:
+        return await ask_one_ai(final_prompt)
 
-            if final_answer and final_answer.strip():
-                return final_answer.strip()
+    except Exception as error:
+        logging.warning(
+            "Final synthesis failed: %s",
+            error
+        )
 
-        except Exception as error:
-            logging.warning(
-                "Final answer by %s failed: %s",
-                name, error
-            )
-
-    # Агар синтез кор накунад, ҷавоби аввал
-    return answers[0][1]
+        return answers[0][1]
 
 
 async def get_ai_answer(prompt, difficult=False):
@@ -553,7 +575,8 @@ async def handle_text(update, context):
     )
 
     history = context.user_data.setdefault(
-        "history", []
+        "history",
+        []
     )
 
     history.append({
@@ -584,12 +607,18 @@ async def handle_text(update, context):
 
         context.user_data["history"] = history[-20:]
 
-        await send_long_text(message, answer)
+        await send_long_text(
+            message,
+            answer
+        )
 
     except Exception:
         logging.exception("AI text error")
 
-        history = context.user_data.get("history", [])
+        history = context.user_data.get(
+            "history",
+            []
+        )
 
         if history and history[-1]["role"] == "user":
             history.pop()
@@ -597,8 +626,8 @@ async def handle_text(update, context):
         context.user_data["history"] = history[-20:]
 
         await message.reply_text(
-            "❌ Ҳоло ҳамаи AI-ҳо дастнорасанд. "
-            "Баъдтар боз кӯшиш кун."
+            "❌ Ҳоло ҳамаи AI-ҳо дастнорасанд.\n\n"
+            "⏳ Лутфан каме интизор шав ва боз кӯшиш кун."
         )
 
 
@@ -629,7 +658,7 @@ async def ask_gemini_image(image_bytes, question):
         )
     )
 
-    return response.text
+    return response.text or ""
 
 
 # ==================================
@@ -678,14 +707,17 @@ async def handle_photo(update, context):
         if not answer:
             answer = "Ҷавоб гирифта нашуд."
 
-        await send_long_text(message, answer)
+        await send_long_text(
+            message,
+            answer
+        )
 
     except Exception:
         logging.exception("Image error")
 
         await message.reply_text(
-            "❌ Сурат таҳлил нашуд. "
-            "Gemini-ро санҷ ё баъдтар кӯшиш кун."
+            "❌ Сурат таҳлил нашуд.\n"
+            "Gemini ҳоло дастнорас аст. Баъдтар кӯшиш кун."
         )
 
 
@@ -711,6 +743,17 @@ async def handle_other_media(update, context):
 
 
 # ==================================
+# ERROR HANDLER
+# ==================================
+
+async def error_handler(update, context):
+    logging.error(
+        "Telegram error:",
+        exc_info=context.error
+    )
+
+
+# ==================================
 # MAIN
 # ==================================
 
@@ -723,10 +766,21 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("panel", panel))
-    app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("reset", reset)
+    )
+
+    app.add_handler(
+        CommandHandler("panel", panel)
+    )
+
+    app.add_handler(
+        CommandHandler("cancel", cancel)
+    )
 
     app.add_handler(
         CallbackQueryHandler(
@@ -763,7 +817,16 @@ def main():
         )
     )
 
-    logging.info("Three AI Telegram bot started!")
+    app.add_error_handler(error_handler)
+
+    logging.info(
+        "Three AI Telegram bot started!"
+    )
+
+    logging.info(
+        "Active AI providers: %s",
+        [name for name, function in get_providers()]
+    )
 
     app.run_polling(
         drop_pending_updates=True
