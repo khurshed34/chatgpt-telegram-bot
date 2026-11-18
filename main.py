@@ -15,6 +15,7 @@ from telegram import (
     InlineKeyboardMarkup,
 )
 from telegram.constants import ChatAction
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -405,15 +406,12 @@ async def ask_groq(prompt):
 def get_providers():
     providers = []
 
-    # Аввал Groq — барои ҷавоби тез
     if groq_client:
         providers.append(("Groq", ask_groq))
 
-    # Дуюм OpenAI
     if openai_client:
         providers.append(("OpenAI", ask_openai))
 
-    # Сеюм Gemini
     if gemini:
         providers.append(("Gemini", ask_gemini))
 
@@ -791,9 +789,30 @@ async def error_handler(update, context):
 def main():
     init_db()
 
+    # Дархостҳои оддии Telegram
+    request = HTTPXRequest(
+        connection_pool_size=20,
+        connect_timeout=30,
+        read_timeout=30,
+        write_timeout=30,
+        pool_timeout=30
+    )
+
+    # Дархостҳои гирифтани паёмҳо
+    get_updates_request = HTTPXRequest(
+        connection_pool_size=5,
+        connect_timeout=30,
+        read_timeout=45,
+        write_timeout=30,
+        pool_timeout=30
+    )
+
     app = (
         Application.builder()
         .token(BOT_TOKEN)
+        .request(request)
+        .get_updates_request(get_updates_request)
+        .bootstrap_retries(10)
         .build()
     )
 
