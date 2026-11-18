@@ -789,7 +789,6 @@ async def error_handler(update, context):
 def main():
     init_db()
 
-    # Дархостҳои оддии Telegram
     request = HTTPXRequest(
         connection_pool_size=20,
         connect_timeout=30,
@@ -798,7 +797,6 @@ def main():
         pool_timeout=30
     )
 
-    # Дархостҳои гирифтани паёмҳо
     get_updates_request = HTTPXRequest(
         connection_pool_size=5,
         connect_timeout=30,
@@ -807,12 +805,12 @@ def main():
         pool_timeout=30
     )
 
+    # Ислоҳ: bootstrap_retries хориҷ карда шуд.
     app = (
         Application.builder()
         .token(BOT_TOKEN)
         .request(request)
         .get_updates_request(get_updates_request)
-        .bootstrap_retries(10)
         .build()
     )
 
