@@ -6,6 +6,8 @@ import sqlite3
 
 from google import genai
 from google.genai import types
+from openai import OpenAI
+from groq import Groq
 
 from telegram import (
     Update,
@@ -28,21 +30,40 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-MODEL = "gemini-3.5-flash-lite"
 DB_FILE = "bot_database.db"
+
+GEMINI_MODEL = "gemini-3.8-flash"
+OPENAI_MODEL = "gpt-5.5"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN ёфт нашуд!")
 
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY ёфт нашуд!")
-
 if ADMIN_ID == 0:
-    raise RuntimeError("ADMIN_ID дар GitHub Secrets гузошта нашудааст!")
+    raise RuntimeError("ADMIN_ID ёфт нашуд!")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+if not any([GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY]):
+    raise RuntimeError("Ягон AI API фаъол нест!")
+
+gemini = (
+    genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY else None
+)
+
+openai_client = (
+    OpenAI(api_key=OPENAI_API_KEY)
+    if OPENAI_API_KEY else None
+)
+
+groq_client = (
+    Groq(api_key=GROQ_API_KEY)
+    if GROQ_API_KEY else None
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -65,7 +86,7 @@ def init_db():
 def save_user(user_id):
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+            "INSERT OR IGNORE INTO users VALUES (?)",
             (user_id,)
         )
 
@@ -86,19 +107,15 @@ def get_user_count():
 
 
 # ==================================
-# ADMIN CHECK
+# ADMIN
 # ==================================
 
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
 
-# ==================================
-# KEYBOARD
-# ==================================
-
 def admin_keyboard():
-    keyboard = [
+    return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
                 "📊 Омори бот",
@@ -111,71 +128,20 @@ def admin_keyboard():
                 callback_data="broadcast"
             )
         ]
-    ]
-
-    return InlineKeyboardMarkup(keyboard)
+    ])
 
 
-# ==================================
-# START
-# ==================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    save_user(user.id)
-
-    context.user_data["history"] = []
-
-    text = (
-        "Салом! 👋\n\n"
-        "Ман ёвари зеҳни сунъӣ ҳастам.\n\n"
-        "💬 Ба ман савол фирист.\n"
-        "🖼️ Сурат фирист, ман онро таҳлил мекунам.\n\n"
-        "Барои суҳбати нав: /reset"
-    )
-
-    if is_admin(user.id):
-        await update.message.reply_text(
-            text + "\n\n⚙️ Панели админ:",
-            reply_markup=admin_keyboard()
-        )
-    else:
-        await update.message.reply_text(text)
-
-
-# ==================================
-# RESET
-# ==================================
-
-async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["history"] = []
-
-    await update.message.reply_text(
-        "✅ Суҳбати нав оғоз шуд!"
-    )
-
-
-# ==================================
-# ADMIN PANEL
-# ==================================
-
-async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if not is_admin(user_id):
+async def panel(update, context):
+    if not is_admin(update.effective_user.id):
         return
 
     await update.message.reply_text(
-        "⚙️ Панели идоракунии бот:",
+        "⚙️ Панели идоракунӣ:",
         reply_markup=admin_keyboard()
     )
 
 
-# ==================================
-# STATS
-# ==================================
-
-async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_stats(update, context):
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
@@ -183,20 +149,14 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await query.answer()
-
-    total = get_user_count()
 
     await query.message.reply_text(
         "📊 ОМОРИ БОТ\n\n"
-        f"👥 Ҳамагӣ корбарон: {total}\n"
+        f"👥 Корбарон: {get_user_count()}"
     )
 
 
-# ==================================
-# BROADCAST START
-# ==================================
-
-async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_broadcast(update, context):
     query = update.callback_query
 
     if not is_admin(query.from_user.id):
@@ -204,21 +164,15 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await query.answer()
-
     context.user_data["broadcast_mode"] = True
 
     await query.message.reply_text(
-        "📢 Паёми худро фирист.\n\n"
-        "Метавонӣ матн, сурат ё видео фиристӣ.\n"
+        "📢 Паёми худро фирист.\n"
         "Барои бекор кардан: /cancel"
     )
 
 
-# ==================================
-# CANCEL BROADCAST
-# ==================================
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update, context):
     if not is_admin(update.effective_user.id):
         return
 
@@ -229,21 +183,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ==================================
-# SEND BROADCAST
-# ==================================
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
+async def broadcast(update, context):
     users = get_users()
-
     sent = 0
     failed = 0
 
     status = await update.message.reply_text(
-        "⏳ Паём фиристода шуда истодааст..."
+        "⏳ Паём фиристода мешавад..."
     )
 
     for user_id in users:
@@ -256,11 +202,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
 
         except Exception as error:
-            logging.warning(
-                "Broadcast failed for %s: %s",
-                user_id,
-                error
-            )
+            logging.warning("Broadcast error: %s", error)
             failed += 1
 
         await asyncio.sleep(0.05)
@@ -270,113 +212,333 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await status.edit_text(
         "✅ ПАЁМГУЗОРӢ БА ОХИР РАСИД!\n\n"
         f"📨 Фиристода шуд: {sent}\n"
-        f"❌ Фиристода нашуд: {failed}\n"
+        f"❌ Хато: {failed}\n"
         f"👥 Ҳамагӣ: {len(users)}"
     )
 
 
 # ==================================
-# SEND LONG TEXT
+# START / RESET
+# ==================================
+
+async def start(update, context):
+    user = update.effective_user
+    save_user(user.id)
+
+    context.user_data["history"] = []
+
+    text = (
+        "Салом! 👋\n\n"
+        "Ман ёвари зеҳни сунъӣ ҳастам.\n\n"
+        "💬 Ба ман савол фирист.\n"
+        "🖼️ Сурат фирист, ман онро таҳлил мекунам.\n\n"
+        "🌍 Бо забони худат навис — "
+        "ман бо ҳамон забон ҷавоб медиҳам.\n\n"
+        "Барои суҳбати нав: /reset"
+    )
+
+    if is_admin(user.id):
+        await update.message.reply_text(
+            text + "\n\n⚙️ Панели админ:",
+            reply_markup=admin_keyboard()
+        )
+    else:
+        await update.message.reply_text(text)
+
+
+async def reset(update, context):
+    context.user_data["history"] = []
+
+    await update.message.reply_text(
+        "✅ Суҳбати нав оғоз шуд!"
+    )
+
+
+# ==================================
+# AI SYSTEM
+# ==================================
+
+SYSTEM_PROMPT = """
+Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ.
+
+ҚОИДАҲОИ МУҲИМ:
+
+1. Забони паёми охирини корбарро муайян кун.
+2. Ҷавобро ҳатман бо ҳамон забон навис.
+3. Тоҷикӣ бошад — тоҷикӣ.
+4. Русӣ бошад — русӣ.
+5. Англисӣ бошад — англисӣ.
+6. Ӯзбекӣ бошад — ӯзбекӣ.
+7. Бо дигар забон бошад — бо ҳамон забон ҷавоб деҳ.
+8. Забони корбарро худсарона иваз накун.
+9. Ҷавоб равшан, дақиқ ва фаҳмо бошад.
+10. Маълумоти сохта надиҳ.
+11. Агар ҷавобро надонӣ, рост бигӯ.
+12. Ба таърихи суҳбат аҳамият деҳ.
+13. Ҷавоби нолозиман дароз нанавис.
+"""
+
+
+def is_hard_question(text):
+    text_lower = text.lower()
+
+    hard_words = [
+        "таҳлил", "муқоиса", "исбот",
+        "чаро", "сабаб", "барномасозӣ",
+        "код", "математика", "ҳисоб кун",
+        "фарқият", "фаҳмон", "детально",
+        "анализ", "сравни", "почему",
+        "explain", "compare", "analyze",
+        "calculate", "reason", "difference"
+    ]
+
+    return (
+        len(text) > 220
+        or sum(word in text_lower for word in hard_words) >= 2
+    )
+
+
+def make_prompt(history):
+    conversation = []
+
+    for item in history:
+        role = item["role"].upper()
+        conversation.append(
+            f"{role}: {item['text']}"
+        )
+
+    return (
+        SYSTEM_PROMPT
+        + "\n\n"
+        + "\n\n".join(conversation)
+        + "\n\nASSISTANT:"
+    )
+
+
+# ==================================
+# GEMINI
+# ==================================
+
+def gemini_request(prompt):
+    response = gemini.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            max_output_tokens=2048,
+            temperature=0.5
+        )
+    )
+
+    return response.text
+
+
+async def ask_gemini(prompt):
+    if not gemini:
+        raise RuntimeError("Gemini API нест.")
+
+    return await asyncio.to_thread(
+        gemini_request, prompt
+    )
+
+
+# ==================================
+# OPENAI
+# ==================================
+
+def openai_request(prompt):
+    response = openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        max_completion_tokens=2048
+    )
+
+    return response.choices[0].message.content
+
+
+async def ask_openai(prompt):
+    if not openai_client:
+        raise RuntimeError("OpenAI API нест.")
+
+    return await asyncio.to_thread(
+        openai_request, prompt
+    )
+
+
+# ==================================
+# GROQ
+# ==================================
+
+def groq_request(prompt):
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        max_tokens=2048,
+        temperature=0.5
+    )
+
+    return response.choices[0].message.content
+
+
+async def ask_groq(prompt):
+    if not groq_client:
+        raise RuntimeError("Groq API нест.")
+
+    return await asyncio.to_thread(
+        groq_request, prompt
+    )
+
+
+# ==================================
+# AI PROVIDERS
+# ==================================
+
+async def ask_one_ai(prompt):
+    providers = [
+        ("Gemini", ask_gemini),
+        ("Groq", ask_groq),
+        ("OpenAI", ask_openai)
+    ]
+
+    for name, function in providers:
+        try:
+            answer = await function(prompt)
+
+            if answer and answer.strip():
+                logging.info("%s answered successfully", name)
+                return answer.strip()
+
+        except Exception as error:
+            logging.warning(
+                "%s unavailable: %s", name, error
+            )
+
+    raise RuntimeError("Ҳамаи AI-ҳо дастнорасанд.")
+
+
+async def ask_all_ai(prompt):
+    providers = [
+        ("Gemini", ask_gemini),
+        ("Groq", ask_groq),
+        ("OpenAI", ask_openai)
+    ]
+
+    tasks = [
+        function(prompt)
+        for name, function in providers
+    ]
+
+    results = await asyncio.gather(
+        *tasks,
+        return_exceptions=True
+    )
+
+    answers = []
+
+    for (name, function), result in zip(providers, results):
+        if isinstance(result, Exception):
+            logging.warning(
+                "%s failed: %s", name, result
+            )
+            continue
+
+        if result and result.strip():
+            answers.append((name, result.strip()))
+
+    if not answers:
+        raise RuntimeError("Ҳеҷ яке аз AI-ҳо ҷавоб надод.")
+
+    # Агар танҳо як AI ҷавоб диҳад
+    if len(answers) == 1:
+        return answers[0][1]
+
+    # Ҷавобҳоро ҷамъ карда, муқоиса мекунем
+    comparison = "\n\n".join(
+        f"ҶАВОБИ {name}:\n{answer}"
+        for name, answer in answers
+    )
+
+    final_prompt = (
+        SYSTEM_PROMPT
+        + "\n\n"
+        "Ҷавобҳои чанд AI-ро муқоиса кун. "
+        "Маълумоти дурустро нигоҳ дор. "
+        "Агар байни ҷавобҳо ихтилоф бошад, "
+        "онро бодиққат таҳлил кун. "
+        "Маълумоти беасосро қабул накун. "
+        "Як ҷавоби ниҳоии равшан пешниҳод кун.\n\n"
+        + comparison
+    )
+
+    # AI-и дастрас ҷавоби ниҳоиро месозад
+    for name, function in providers:
+        try:
+            final_answer = await function(final_prompt)
+
+            if final_answer and final_answer.strip():
+                return final_answer.strip()
+
+        except Exception as error:
+            logging.warning(
+                "Final answer by %s failed: %s",
+                name, error
+            )
+
+    # Агар синтез кор накунад, ҷавоби аввал
+    return answers[0][1]
+
+
+async def get_ai_answer(prompt, difficult=False):
+    if difficult:
+        return await ask_all_ai(prompt)
+
+    return await ask_one_ai(prompt)
+
+
+# ==================================
+# LONG TEXT
 # ==================================
 
 async def send_long_text(message, text):
     limit = 4000
 
     for i in range(0, len(text), limit):
-        await message.reply_text(text[i:i + limit])
-
-
-# ==================================
-# GEMINI TEXT
-# ==================================
-
-async def ask_gemini(prompt):
-    last_error = None
-
-    for attempt in range(3):
-        try:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=2048,
-                    temperature=0.7
-                )
-            )
-
-            return response.text
-
-        except Exception as error:
-            last_error = error
-
-            logging.warning(
-                "Gemini attempt %s failed: %s",
-                attempt + 1,
-                error
-            )
-
-            if attempt < 2:
-                await asyncio.sleep(3 * (attempt + 1))
-
-    raise last_error
-
-
-# ==================================
-# GEMINI IMAGE
-# ==================================
-
-async def ask_gemini_image(image_bytes, mime_type, question):
-    last_error = None
-
-    for attempt in range(3):
-        try:
-            image_part = types.Part.from_bytes(
-                data=image_bytes,
-                mime_type=mime_type
-            )
-
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=MODEL,
-                contents=[
-                    question,
-                    image_part
-                ],
-                config=types.GenerateContentConfig(
-                    max_output_tokens=2048,
-                    temperature=0.7
-                )
-            )
-
-            return response.text
-
-        except Exception as error:
-            last_error = error
-
-            logging.warning(
-                "Gemini image attempt %s failed: %s",
-                attempt + 1,
-                error
-            )
-
-            if attempt < 2:
-                await asyncio.sleep(3 * (attempt + 1))
-
-    raise last_error
+        await message.reply_text(
+            text[i:i + limit]
+        )
 
 
 # ==================================
 # HANDLE TEXT
 # ==================================
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_text(update, context):
     message = update.message
     user_id = update.effective_user.id
 
     save_user(user_id)
 
-    if is_admin(user_id) and context.user_data.get("broadcast_mode"):
+    if (
+        is_admin(user_id)
+        and context.user_data.get("broadcast_mode")
+    ):
         await broadcast(update, context)
         return
 
@@ -390,7 +552,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action=ChatAction.TYPING
     )
 
-    history = context.user_data.setdefault("history", [])
+    history = context.user_data.setdefault(
+        "history", []
+    )
 
     history.append({
         "role": "user",
@@ -400,25 +564,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = history[-20:]
     context.user_data["history"] = history
 
-    conversation = ""
-
-    for item in history:
-        if item["role"] == "user":
-            conversation += "Корбар: " + item["text"] + "\n"
-        else:
-            conversation += "Ёвар: " + item["text"] + "\n"
-
-    prompt = (
-        "Ту ёвари зеҳни сунъӣ ҳастӣ. "
-        "Ба саволҳо равшан, дақиқ ва муфид ҷавоб деҳ. "
-        "Агар ҷавобро надонӣ, маълумоти сохта надиҳ. "
-        "Агар корбар ба тоҷикӣ нависад, тоҷикӣ ҷавоб деҳ.\n\n"
-        + conversation
-        + "\nЁвар:"
-    )
+    prompt = make_prompt(history)
 
     try:
-        answer = await ask_gemini(prompt)
+        difficult = is_hard_question(user_text)
+
+        answer = await get_ai_answer(
+            prompt,
+            difficult=difficult
+        )
 
         if not answer:
             answer = "Ҷавоб гирифта нашуд."
@@ -433,7 +587,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_long_text(message, answer)
 
     except Exception:
-        logging.exception("Gemini text error")
+        logging.exception("AI text error")
 
         history = context.user_data.get("history", [])
 
@@ -443,22 +597,55 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["history"] = history[-20:]
 
         await message.reply_text(
-            "❌ Ҳоло сервер ҷавоб дода наметавонад. "
+            "❌ Ҳоло ҳамаи AI-ҳо дастнорасанд. "
             "Баъдтар боз кӯшиш кун."
         )
+
+
+# ==================================
+# GEMINI IMAGE
+# ==================================
+
+async def ask_gemini_image(image_bytes, question):
+    if not gemini:
+        raise RuntimeError("Gemini API нест.")
+
+    image_part = types.Part.from_bytes(
+        data=image_bytes,
+        mime_type="image/jpeg"
+    )
+
+    response = await asyncio.to_thread(
+        gemini.models.generate_content,
+        model=GEMINI_MODEL,
+        contents=[
+            SYSTEM_PROMPT,
+            question,
+            image_part
+        ],
+        config=types.GenerateContentConfig(
+            max_output_tokens=2048,
+            temperature=0.5
+        )
+    )
+
+    return response.text
 
 
 # ==================================
 # HANDLE PHOTO
 # ==================================
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_photo(update, context):
     message = update.message
     user_id = update.effective_user.id
 
     save_user(user_id)
 
-    if is_admin(user_id) and context.user_data.get("broadcast_mode"):
+    if (
+        is_admin(user_id)
+        and context.user_data.get("broadcast_mode")
+    ):
         await broadcast(update, context)
         return
 
@@ -470,7 +657,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         photo = message.photo[-1]
 
-        telegram_file = await context.bot.get_file(photo.file_id)
+        telegram_file = await context.bot.get_file(
+            photo.file_id
+        )
 
         image_bytes = bytes(
             await telegram_file.download_as_bytearray()
@@ -478,39 +667,41 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         question = message.caption or (
             "Ин суратро таҳлил кун. "
-            "Чӣ чизҳо дар он дида мешаванд? "
-            "Бо забони тоҷикӣ фаҳмон."
+            "Бо забони истифодабаранда ҷавоб деҳ."
         )
 
         answer = await ask_gemini_image(
             image_bytes,
-            "image/jpeg",
             question
         )
 
         if not answer:
-            answer = "Дар бораи ин сурат ҷавоб гирифта нашуд."
+            answer = "Ҷавоб гирифта нашуд."
 
         await send_long_text(message, answer)
 
     except Exception:
-        logging.exception("Image analysis error")
+        logging.exception("Image error")
 
         await message.reply_text(
-            "❌ Суратро таҳлил карда натавонистам. "
-            "Баъдтар боз кӯшиш кун."
+            "❌ Сурат таҳлил нашуд. "
+            "Gemini-ро санҷ ё баъдтар кӯшиш кун."
         )
 
 
 # ==================================
-# HANDLE OTHER MEDIA
+# OTHER MEDIA
 # ==================================
 
-async def handle_other_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_other_media(update, context):
     user_id = update.effective_user.id
+
     save_user(user_id)
 
-    if is_admin(user_id) and context.user_data.get("broadcast_mode"):
+    if (
+        is_admin(user_id)
+        and context.user_data.get("broadcast_mode")
+    ):
         await broadcast(update, context)
         return
 
@@ -526,7 +717,11 @@ async def handle_other_media(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     init_db()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
@@ -534,11 +729,17 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel))
 
     app.add_handler(
-        CallbackQueryHandler(show_stats, pattern="^stats$")
+        CallbackQueryHandler(
+            show_stats,
+            pattern="^stats$"
+        )
     )
 
     app.add_handler(
-        CallbackQueryHandler(start_broadcast, pattern="^broadcast$")
+        CallbackQueryHandler(
+            start_broadcast,
+            pattern="^broadcast$"
+        )
     )
 
     app.add_handler(
@@ -562,9 +763,11 @@ def main():
         )
     )
 
-    logging.info("Telegram bot started!")
+    logging.info("Three AI Telegram bot started!")
 
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True
+    )
 
 
 if __name__ == "__main__":
