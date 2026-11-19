@@ -3,6 +3,7 @@ import os
 import asyncio
 import logging
 import sqlite3
+import base64
 
 from groq import Groq
 
@@ -33,8 +34,6 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 DB_FILE = "bot_database.db"
 
 GROQ_MODEL = "openai/gpt-oss-120b"
-
-# Барои таҳлили сурат модели Vision лозим аст.
 GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 AI_TIMEOUT = 45
@@ -43,11 +42,11 @@ IMAGE_TIMEOUT = 60
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN ёфт нашуд!")
 
-if ADMIN_ID == 0:
-    raise RuntimeError("ADMIN_ID ёфт нашуд!")
-
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY ёфт нашуд!")
+
+if ADMIN_ID == 0:
+    raise RuntimeError("ADMIN_ID ёфт нашуд!")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -72,7 +71,7 @@ def init_db():
 def save_user(user_id):
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO users VALUES (?)",
+            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
             (user_id,)
         )
 
@@ -82,7 +81,8 @@ def get_users():
         rows = conn.execute(
             "SELECT user_id FROM users"
         ).fetchall()
-        return [row[0] for row in rows]
+
+    return [row[0] for row in rows]
 
 
 def get_user_count():
@@ -122,7 +122,7 @@ async def panel(update, context):
         return
 
     await update.message.reply_text(
-        "⚙️ Панели идоракунӣ:",
+        "⚙️ ПАНЕЛИ ИДОРАКУНӢ",
         reply_markup=admin_keyboard()
     )
 
@@ -141,7 +141,7 @@ async def show_stats(update, context):
 
     await query.message.reply_text(
         "📊 ОМОРИ БОТ\n\n"
-        f"👥 Корбарон: {get_user_count()}"
+        f"👥 Ҳамагӣ корбарон: {get_user_count()}"
     )
 
 
@@ -156,10 +156,12 @@ async def start_broadcast(update, context):
         return
 
     await query.answer()
+
     context.user_data["broadcast_mode"] = True
 
     await query.message.reply_text(
-        "📢 Паёми худро фирист.\n"
+        "📢 Паёми худро фирист.\n\n"
+        "Метавонӣ матн, сурат ё видео фиристӣ.\n\n"
         "Барои бекор кардан: /cancel"
     )
 
@@ -177,11 +179,12 @@ async def cancel(update, context):
 
 async def broadcast(update, context):
     users = get_users()
+
     sent = 0
     failed = 0
 
     status = await update.message.reply_text(
-        "⏳ Паём фиристода мешавад..."
+        "⏳ Паёмгузорӣ оғоз шуд..."
     )
 
     for user_id in users:
@@ -194,7 +197,11 @@ async def broadcast(update, context):
             sent += 1
 
         except Exception as error:
-            logging.warning("Broadcast error: %s", error)
+            logging.warning(
+                "Broadcast error for %s: %s",
+                user_id,
+                error
+            )
             failed += 1
 
         await asyncio.sleep(0.05)
@@ -215,34 +222,43 @@ async def broadcast(update, context):
 
 async def start(update, context):
     user = update.effective_user
+
     save_user(user.id)
 
     context.user_data["history"] = []
 
-    text = (
+    welcome = (
         "Салом! 👋\n\n"
-        "Ман ёвари зеҳни сунъии бисёрзабона ҳастам.\n\n"
-        "💬 Ба ман савол фирист.\n"
-        "🖼️ Сурат фирист, ман онро таҳлил мекунам.\n\n"
-        "🌍 Бо забони худат навис — "
-        "ман бо ҳамон забон ҷавоб медиҳам.\n\n"
-        "Барои суҳбати нав: /reset"
+        "🤖 Ман ёвари зеҳни сунъии бисёрзабона ҳастам.\n\n"
+        "💬 Ба ман ҳар гуна савол фирист.\n"
+        "🖼️ Сурат фирист, ман онро таҳлил мекунам.\n"
+        "📚 Маълумоти таърихӣ ва илмӣ мегирӣ.\n"
+        "🌍 Бо забони худат навис.\n\n"
+        "Ман метавонам ба ту кӯмак кунам:\n"
+        "• Таърих ва география\n"
+        "• Илм ва технология\n"
+        "• Математика\n"
+        "• Барномасозӣ\n"
+        "• Тарҷума\n"
+        "• Саволҳои ҳаррӯза\n\n"
+        "🔄 Барои суҳбати нав: /reset"
     )
 
     if is_admin(user.id):
         await update.message.reply_text(
-            text + "\n\n⚙️ Панели админ:",
+            welcome + "\n\n⚙️ Панели админ:",
             reply_markup=admin_keyboard()
         )
     else:
-        await update.message.reply_text(text)
+        await update.message.reply_text(welcome)
 
 
 async def reset(update, context):
     context.user_data["history"] = []
 
     await update.message.reply_text(
-        "✅ Суҳбати нав оғоз шуд!"
+        "✅ Суҳбати нав оғоз шуд!\n\n"
+        "Акнун саволи нав фирист."
     )
 
 
@@ -253,21 +269,53 @@ async def reset(update, context):
 SYSTEM_PROMPT = """
 Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ.
 
-ҚОИДАҲО:
+ВАЗИФАИ ТУ:
+Ба корбар ҷавобҳои дуруст, равшан,
+муфассал ва фаҳмо пешниҳод кун.
 
-1. Забони паёми охирини корбарро муайян кун.
-2. Ҳатман бо ҳамон забон ҷавоб деҳ.
-3. Тоҷикӣ бошад — тоҷикӣ.
-4. Русӣ бошад — русӣ.
-5. Англисӣ бошад — англисӣ.
-6. Ӯзбекӣ бошад — ӯзбекӣ.
-7. Бо дигар забон бошад — бо ҳамон забон ҷавоб деҳ.
-8. Забони корбарро худсарона иваз накун.
-9. Ҷавоб равшан, дақиқ ва фаҳмо бошад.
-10. Маълумоти сохта надиҳ.
-11. Агар ҷавобро надонӣ, рост бигӯ.
-12. Ба таърихи суҳбат аҳамият деҳ.
-13. Ҷавоби нолозиман дароз нанавис.
+ЗАБОН:
+1. Бо забони охирини корбар ҷавоб деҳ.
+2. Тоҷикӣ бошад — тоҷикӣ.
+3. Русӣ бошад — русӣ.
+4. Англисӣ бошад — англисӣ.
+5. Ӯзбекӣ бошад — ӯзбекӣ.
+6. Забони корбарро худсарона иваз накун.
+
+ТАРЗИ ҶАВОБ:
+1. Саволи оддиро кӯтоҳ ва фаҳмо ҷавоб деҳ.
+2. Агар корбар маълумоти пурра талаб кунад,
+   ҷавоби муфассал пешниҳод кун.
+3. Барои шахсиятҳои таърихӣ зиндагинома,
+   таваллуд, вафот, фаъолият ва хизматҳоро шарҳ деҳ.
+4. Барои таърих санаҳо ва воқеаҳои муҳимро нишон деҳ.
+5. Барои илм шарҳи фаҳмо пешниҳод кун.
+6. Барои математика ҳалли қадам ба қадам навис.
+7. Барои барномасозӣ код ва шарҳи онро пешниҳод кун.
+8. Барои муқоиса фарқиятҳоро нишон деҳ.
+9. Барои тарҷума маънои дурустро нигоҳ дор.
+10. Агар мувофиқ бошад, дар охир хулоса навис.
+
+ФОРМАТ:
+- Аз сарлавҳаҳои мувофиқ истифода бар.
+- Рақамгузорӣ ва рӯйхатҳоро истифода бар.
+- Эмодзиҳоро ба андозаи муносиб истифода бар.
+- Матнро барои Telegram фаҳмо соз.
+- Ҷадвалро танҳо дар мавридҳои мувофиқ истифода бар.
+
+ДАҚИҚӢ:
+1. Маълумоти сохта надиҳ.
+2. Сана ва рақамҳоро беасос насоз.
+3. Агар ҷавобро надонӣ, рост бигӯ.
+4. Тахминро ҳамчун ҳақиқат пешниҳод накун.
+5. Манбаъҳои сохтаро нишон надеҳ.
+6. Маълумоти кӯҳнаро ҳамчун маълумоти нав муаррифӣ накун.
+
+МУҲИМ:
+- Ба саволи оддӣ ҷавоби кӯтоҳ деҳ.
+- Ба саволи муфассал ҷавоби пурра деҳ.
+- Ҷавобро бе зарурат кӯтоҳ накун.
+- Ба таърихи суҳбат аҳамият деҳ.
+- Ба корбар бо эҳтиром муносибат кун.
 """
 
 
@@ -278,15 +326,17 @@ def is_hard_question(text):
         "таҳлил", "муқоиса", "исбот",
         "чаро", "сабаб", "барномасозӣ",
         "код", "математика", "ҳисоб кун",
-        "фарқият", "фаҳмон", "детально",
-        "анализ", "сравни", "почему",
+        "фарқият", "фаҳмон", "муфассал",
+        "пурра", "детально", "анализ",
+        "сравни", "почему", "объясни",
         "explain", "compare", "analyze",
-        "calculate", "reason", "difference"
+        "calculate", "reason", "difference",
+        "full information", " подробно"
     ]
 
     return (
         len(text) > 220
-        or sum(word in text_lower for word in hard_words) >= 2
+        or any(word in text_lower for word in hard_words)
     )
 
 
@@ -294,42 +344,42 @@ def make_prompt(history):
     conversation = []
 
     for item in history:
-        role = item["role"].upper()
-        conversation.append(
-            f"{role}: {item['text']}"
-        )
+        conversation.append({
+            "role": item["role"],
+            "content": item["text"]
+        })
 
-    return "\n\n".join(conversation)
+    return conversation
 
 
 # ==================================
-# GROQ TEXT
+# GROQ TEXT AI
 # ==================================
 
-def groq_request(prompt):
+def groq_request(conversation):
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    messages.extend(conversation)
+
     response = groq_client.chat.completions.create(
         model=GROQ_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        max_completion_tokens=2048,
+        messages=messages,
+        max_completion_tokens=4096,
         temperature=0.5
     )
 
     return response.choices[0].message.content or ""
 
 
-async def ask_groq(prompt):
+async def ask_groq(conversation):
     return await asyncio.to_thread(
         groq_request,
-        prompt
+        conversation
     )
 
 
@@ -343,10 +393,14 @@ async def get_ai_answer(prompt, difficult=False):
         if answer and answer.strip():
             return answer.strip()
 
-        raise RuntimeError("Groq ҷавоби холӣ баргардонд.")
+        raise RuntimeError(
+            "Groq ҷавоби холӣ баргардонд."
+        )
 
     except asyncio.TimeoutError:
-        raise RuntimeError("Groq вақти ҷавобро гузаронд.")
+        raise RuntimeError(
+            "Groq вақти ҷавобро гузаронд."
+        )
 
 
 # ==================================
@@ -354,7 +408,7 @@ async def get_ai_answer(prompt, difficult=False):
 # ==================================
 
 async def send_long_text(message, text):
-    limit = 4000
+    limit = 3900
 
     for i in range(0, len(text), limit):
         await message.reply_text(
@@ -420,12 +474,18 @@ async def handle_text(update, context):
 
         context.user_data["history"] = history[-20:]
 
-        await send_long_text(message, answer)
+        await send_long_text(
+            message,
+            answer
+        )
 
     except Exception:
         logging.exception("Groq text error")
 
-        history = context.user_data.get("history", [])
+        history = context.user_data.get(
+            "history",
+            []
+        )
 
         if history and history[-1]["role"] == "user":
             history.pop()
@@ -433,13 +493,13 @@ async def handle_text(update, context):
         context.user_data["history"] = history[-20:]
 
         await message.reply_text(
-            "❌ Groq ҳоло ҷавоб дода натавонист.\n\n"
+            "❌ Ҳоло AI ҷавоб дода натавонист.\n\n"
             "⏳ Каме интизор шав ва боз кӯшиш кун."
         )
 
 
 # ==================================
-# GROQ IMAGE
+# GROQ IMAGE AI
 # ==================================
 
 def groq_image_request(image_base64, question):
@@ -474,8 +534,6 @@ def groq_image_request(image_base64, question):
 
 
 async def ask_groq_image(image_bytes, question):
-    import base64
-
     image_base64 = (
         "data:image/jpeg;base64,"
         + base64.b64encode(image_bytes).decode("utf-8")
@@ -522,8 +580,8 @@ async def handle_photo(update, context):
         )
 
         question = message.caption or (
-            "Ин суратро таҳлил кун. "
-            "Бо забони истифодабаранда ҷавоб деҳ."
+            "Ин суратро бодиққат таҳлил кун. "
+            "Бо забони корбар ҷавоб деҳ."
         )
 
         answer = await asyncio.wait_for(
@@ -537,10 +595,15 @@ async def handle_photo(update, context):
         if not answer:
             answer = "Ҷавоб гирифта нашуд."
 
-        await send_long_text(message, answer)
+        await send_long_text(
+            message,
+            answer
+        )
 
     except asyncio.TimeoutError:
-        logging.warning("Groq image analysis timed out")
+        logging.warning(
+            "Groq image analysis timed out"
+        )
 
         await message.reply_text(
             "⏳ Таҳлили сурат вақт гирифт. "
@@ -551,8 +614,8 @@ async def handle_photo(update, context):
         logging.exception("Groq image error")
 
         await message.reply_text(
-            "❌ Сурат таҳлил нашуд.\n"
-            "Модели Vision ё API-ро санҷ."
+            "❌ Сурат таҳлил нашуд.\n\n"
+            "Модели Vision ва API-ро санҷ."
         )
 
 
@@ -573,7 +636,7 @@ async def handle_other_media(update, context):
         return
 
     await update.message.reply_text(
-        "Ҳоло ман матн ва суратро қабул карда метавонам."
+        "📌 Ҳоло ман матн ва суратро қабул карда метавонам."
     )
 
 
@@ -583,8 +646,13 @@ async def handle_other_media(update, context):
 
 async def error_handler(update, context):
     logging.error(
-        "Telegram error:",
-        exc_info=context.error
+        "Telegram error: %s",
+        context.error,
+        exc_info=(
+            type(context.error),
+            context.error,
+            context.error.__traceback__
+        ) if context.error else None
     )
 
 
@@ -619,10 +687,25 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("panel", panel))
-    app.add_handler(CommandHandler("cancel", cancel))
+    # COMMANDS
+
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("reset", reset)
+    )
+
+    app.add_handler(
+        CommandHandler("panel", panel)
+    )
+
+    app.add_handler(
+        CommandHandler("cancel", cancel)
+    )
+
+    # ADMIN CALLBACKS
 
     app.add_handler(
         CallbackQueryHandler(
@@ -638,9 +721,16 @@ def main():
         )
     )
 
+    # PHOTO
+
     app.add_handler(
-        MessageHandler(filters.PHOTO, handle_photo)
+        MessageHandler(
+            filters.PHOTO,
+            handle_photo
+        )
     )
+
+    # TEXT
 
     app.add_handler(
         MessageHandler(
@@ -649,6 +739,8 @@ def main():
         )
     )
 
+    # OTHER MEDIA
+
     app.add_handler(
         MessageHandler(
             filters.ALL & ~filters.COMMAND,
@@ -656,10 +748,12 @@ def main():
         )
     )
 
+    # ERRORS
+
     app.add_error_handler(error_handler)
 
-    logging.info("Groq Telegram bot started!")
-    logging.info("Active AI provider: Groq")
+    logging.info("AI Telegram bot started!")
+    logging.info("AI provider: Groq")
     logging.info("Text model: %s", GROQ_MODEL)
     logging.info("Vision model: %s", GROQ_VISION_MODEL)
 
