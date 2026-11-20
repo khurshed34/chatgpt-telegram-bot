@@ -107,39 +107,110 @@ def get_user_count():
 # =========================
 
 def detect_language(text):
-    text = (text or "").lower()
+    text = (text or "").lower().strip()
 
-    if re.search(r"[а-яё]", text):
-        return "Russian"
+    # Агар корбар ошкоро тоҷикӣ талаб кунад
+    tajik_requests = [
+        "ба тоҷикӣ",
+        "бо тоҷикӣ",
+        "тоҷикӣ ҷавоб",
+        "ба забони тоҷикӣ",
+        "бо забони тоҷикӣ",
+        "тоҷики навис",
+        "тоҷикӣ навис",
+        "ҷавоб деҳ",
+        "ҷавоб диҳ",
+        "ҷавоб бот",
+    ]
 
-    if re.search(r"[ӯқғҳҷӣ]", text):
+    if any(word in text for word in tajik_requests):
         return "Tajik"
 
+    # Ҳарфҳои махсуси тоҷикӣ
+    tajik_chars = "ӣӯқғҳҷ"
+
+    if any(char in text for char in tajik_chars):
+        return "Tajik"
+
+    # Калимаҳои маъмули тоҷикӣ
+    tajik_words = [
+        "салом",
+        "ассалому алайкум",
+        "салом алейкум",
+        "маълумот",
+        "дар бораи",
+        "мехоҳам",
+        "метавонӣ",
+        "лутфан",
+        "ташаккур",
+        "илтимос",
+        "тоҷик",
+        "тоҷикистон",
+        "навис",
+        "фаҳмон",
+        "шарҳ деҳ",
+        "кунад",
+        "мекунад",
+        "ҳаст",
+        "нест",
+        "чӣ",
+        "чи",
+        "ҷавоб",
+        "бошад",
+        "шудааст",
+        "мегӯянд",
+        "медонӣ",
+    ]
+
+    if any(word in text for word in tajik_words):
+        return "Tajik"
+
+    # Форсӣ
     if re.search(r"[پچژگ]", text):
         return "Persian"
 
+    # Ӯзбекӣ
     uzbek_words = [
-        "salom", "qanday", "rahmat",
-        "nima", "haqida", "uchun",
+        "salom",
+        "qanday",
+        "rahmat",
+        "nima",
+        "haqida",
+        "uchun",
+        "o'zbek",
     ]
 
     if any(word in text for word in uzbek_words):
         return "Uzbek"
 
+    # Русӣ
+    if re.search(r"[а-яё]", text):
+        return "Russian"
+
+    # Англисӣ
+    if re.search(r"[a-z]", text):
+        return "English"
+
     return "Tajik"
+
 
 def language_instruction(language):
     instructions = {
-        "Tajik": "Бо забони тоҷикӣ ҷавоб деҳ.",
-        "Uzbek": "O'zbek tilida javob ber.",
-        "Russian": "Отвечай на русском языке.",
-        "Persian": "به زبان فارسی پاسخ بده.",
-        "English": "Answer in English.",
+        "Tajik": """
+ҲАМАИ ҷавобро танҳо бо забони тоҷикӣ навис.
+Агар маълумоти корбар ба забони русӣ ё англисӣ бошад,
+онро ба тоҷикӣ тарҷума ва шарҳ деҳ.
+Калимаҳои русӣ ва англисиро бе зарурат истифода накун.
+""",
+        "Uzbek": "O'zbek tilida to'liq javob ber.",
+        "Russian": "Отвечай полностью на русском языке.",
+        "Persian": "تمام پاسخ را به زبان فارسی بنویس.",
+        "English": "Answer entirely in English.",
     }
 
     return instructions.get(
         language,
-        "Бо забони тоҷикӣ ҷавоб деҳ."
+        instructions["Tajik"],
     )
 
 # =========================
@@ -190,25 +261,30 @@ def needs_web_search(text):
 
 def get_system_prompt(language, search_web=False):
     prompt = """
-Ту як ёрдамчии зеҳни сунъии доно ва боэътимод ҳастӣ.
+Ту як ёрдамчии зеҳни сунъии доно, боэътимод ва касбӣ ҳастӣ.
 
-Қоидаҳо:
+ҚОИДАҲОИ АСОСӢ:
 
-1. Ба саволҳо дақиқ, равшан ва фаҳмо ҷавоб деҳ.
-2. Маълумоти сохта ё рақамҳои беасос нанавис.
-3. Агар ҷавобро намедонӣ, рост бигӯ.
+1. Ба саволҳо дақиқ, пурра ва фаҳмо ҷавоб деҳ.
+2. Маълумоти сохта, санаҳои нодуруст ва рақамҳои беасос нанавис.
+3. Агар ҷавобро надонӣ, рост бигӯ.
 4. Ҷавобро бо сарлавҳа ва рӯйхатҳо тартиб деҳ.
 5. Ба саволи корбар бевосита ҷавоб деҳ.
 6. Агар савол таърихӣ бошад, воқеаҳо ва санаҳоро омехта накун.
 7. Агар савол илмӣ бошад, маълумоти дурусти илмӣ пешниҳод кун.
 8. Агар савол номуайян бошад, шарҳи зарурӣ пурс.
 9. Ҷавобро бе такрори зиёдатӣ навис.
-10. Ҳеҷ гоҳ манбаъ ё истиноди сохта пешниҳод накун.
+10. Манбаъ ё истиноди сохта пешниҳод накун.
+11. Матни фиристодаи корбарро бо диққат хон.
+12. Агар корбар тарҷума ё ҷавоб ба забони муайянро талаб кунад,
+    ҳатман ҳамон забонро истифода бар.
+13. Агар корбар маълумоти пурра талаб кунад, ҷавоби муфассал деҳ.
+14. Ҷавобро бо забони интихобшуда яксон нигоҳ дор.
 """
 
     if search_web:
         prompt += """
-Агар ба маълумоти нав эҳтиёҷ бошад, кӯшиш кун бо имконияти ҷустуҷӯи дастрас маълумотро санҷӣ.
+Агар ба маълумоти нав эҳтиёҷ бошад, бо имконияти ҷустуҷӯи дастрас онро санҷ.
 Агар ҷустуҷӯи интернет дастрас набошад, инро пинҳон накун.
 Маълумоти санҷиданашударо ҳамчун маълумоти нав пешниҳод накун.
 """
@@ -241,10 +317,6 @@ def groq_request(conversation, language, search_web=False):
         "temperature": 0.2,
     }
 
-    # ИСЛОҲИ ХАТО:
-    # required дигар истифода намешавад.
-    # Агар модел tool-ро истифода набарад, ҷавоби оддӣ медиҳад.
-
     if search_web:
         request_options["tools"] = [
             {"type": "browser_search"}
@@ -272,6 +344,7 @@ async def ask_groq(conversation, language, search_web=False):
         search_web,
     )
 
+
 async def get_ai_answer(conversation, language, search_web=False):
     try:
         answer = await ask_groq(
@@ -285,11 +358,8 @@ async def get_ai_answer(conversation, language, search_web=False):
 
         return "❌ AI ҷавоби холӣ баргардонд."
 
-    except Exception as error:
+    except Exception:
         logger.exception("Groq request failed")
-
-        # Агар browser_search дастгирӣ нашавад,
-        # як маротиба бе tool ҷавоб мегирем.
 
         if search_web:
             try:
@@ -313,8 +383,6 @@ async def get_ai_answer(conversation, language, search_web=False):
 
         return (
             "❌ Ҳоло AI ҷавоб дода натавонист.\n\n"
-            f"Навъи хато: {type(error).__name__}\n"
-            f"Тафсилот: {str(error)[:700]}\n\n"
             "Лутфан баъдтар боз кӯшиш кун."
         )
 
@@ -520,8 +588,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "content": text,
     })
 
-    # Танҳо 20 паёми охир нигоҳ дошта мешаванд.
-
     history = history[-20:]
     context.user_data["history"] = history
 
@@ -720,6 +786,7 @@ def main():
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES,
     )
+
 
 if __name__ == "__main__":
     main()
