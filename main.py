@@ -33,13 +33,11 @@ if not BOT_TOKEN:
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY дар GitHub Secrets нест!")
 
-# Модели асосӣ ва эҳтиётӣ
 TEXT_MODELS = [
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
 ]
 
-# Модели асосии таҳлили акс ва модели эҳтиётӣ
 VISION_MODELS = [
     "qwen/qwen3.8-27b",
     "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -72,12 +70,13 @@ logger = logging.getLogger(__name__)
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT DEFAULT '',
                 first_name TEXT DEFAULT '',
-                language TEXT DEFAULT 'Tajik'
+                language TEXT DEFAULT 'Auto'
             )
         """)
 
@@ -88,6 +87,15 @@ def init_db():
             )
         """)
 
+        # Корбарони кӯҳна ба интихоби автоматӣ мегузаранд.
+        conn.execute("""
+            UPDATE users
+            SET language = 'Auto'
+            WHERE language IS NULL OR language = ''
+        """)
+
+    logger.info("Database initialized")
+
 
 def save_user(user):
     if not user:
@@ -95,8 +103,14 @@ def save_user(user):
 
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute("""
-            INSERT INTO users (user_id, username, first_name)
-            VALUES (?, ?, ?)
+            INSERT INTO users (
+                user_id,
+                username,
+                first_name,
+                language
+            )
+            VALUES (?, ?, ?, 'Auto')
+
             ON CONFLICT(user_id) DO UPDATE SET
                 username = excluded.username,
                 first_name = excluded.first_name
@@ -132,7 +146,7 @@ def get_language(user_id):
             (user_id,),
         ).fetchone()
 
-    return result[0] if result else "Tajik"
+    return result[0] if result else "Auto"
 
 
 def set_language(user_id, language):
@@ -140,6 +154,7 @@ def set_language(user_id, language):
         conn.execute("""
             INSERT INTO users (user_id, language)
             VALUES (?, ?)
+
             ON CONFLICT(user_id) DO UPDATE SET
                 language = excluded.language
         """, (user_id, language))
@@ -156,7 +171,9 @@ def get_history(user_id):
         return []
 
     try:
-        return json.loads(result[0])
+        history = json.loads(result[0])
+        return history if isinstance(history, list) else []
+
     except (json.JSONDecodeError, TypeError):
         return []
 
@@ -168,6 +185,7 @@ def save_history(user_id, history):
         conn.execute("""
             INSERT INTO conversations (user_id, history)
             VALUES (?, ?)
+
             ON CONFLICT(user_id) DO UPDATE SET
                 history = excluded.history
         """, (
@@ -192,14 +210,20 @@ LANGUAGES = {
     "tj": "Tajik",
     "to": "Tajik",
     "tajik": "Tajik",
+
     "ru": "Russian",
     "rus": "Russian",
+
     "en": "English",
     "eng": "English",
+
     "uz": "Uzbek",
     "uzb": "Uzbek",
+
     "fa": "Persian",
     "persian": "Persian",
+
+    "auto": "Auto",
 }
 
 
@@ -211,9 +235,10 @@ def detect_requested_language(text):
             "ба тоҷикӣ",
             "бо тоҷикӣ",
             "ба забони тоҷикӣ",
-            "бо забони тоҷикӣ",
             "тоҷикӣ ҷавоб деҳ",
+            "на тоҷикӣ",
         ],
+
         "Russian": [
             "ба русӣ",
             "бо русӣ",
@@ -222,6 +247,7 @@ def detect_requested_language(text):
             "по-русски",
             "ответь на русском",
         ],
+
         "English": [
             "ба англисӣ",
             "бо англисӣ",
@@ -229,12 +255,14 @@ def detect_requested_language(text):
             "in english",
             "answer in english",
         ],
+
         "Uzbek": [
             "ба ӯзбекӣ",
             "бо ӯзбекӣ",
             "o'zbek tilida",
             "узбекча жавоб",
         ],
+
         "Persian": [
             "ба форсӣ",
             "бо форсӣ",
@@ -249,21 +277,68 @@ def detect_requested_language(text):
     return None
 
 
-def language_instruction(language):
+def language_instruction(language="Auto"):
+
     instructions = {
-        "Tajik": """
-ҶАВОБРО ПУРРА ВА ТАНҲО БО ЗАБОНИ ТОҶИКӢ НАВИС.
-Агар корбар ба русӣ ё англисӣ савол диҳад, ба тоҷикӣ ҷавоб деҳ.
-Агар корбар тарҷума ба забони дигарро талаб кунад, ҳамон забонро истифода бар.
-Ҷумлаҳоро равон, фаҳмо ва бе ғалатҳои имлоӣ навис.
+
+        "Auto": """
+ЗАБОНИ ҶАВОБРО ХУДАТ МУАЙЯН КУН.
+
+1. Аввал забони паёми ОХИРИНИ корбарро муайян кун.
+2. Ҷавобро пурра бо ҳамон забон навис.
+3. Агар тоҷикӣ навишта бошад, танҳо тоҷикӣ ҷавоб деҳ.
+4. Агар русӣ навишта бошад, танҳо русӣ ҷавоб деҳ.
+5. Агар англисӣ навишта бошад, танҳо англисӣ ҷавоб деҳ.
+6. Агар ӯзбекӣ навишта бошад, танҳо ӯзбекӣ ҷавоб деҳ.
+7. Агар форсӣ навишта бошад, танҳо форсӣ ҷавоб деҳ.
+8. Забони паёмҳои пешинаро ба назар нагир.
+9. Забонҳоро дар як ҷавоб омехта накун.
+10. Агар корбар тарҷума талаб кунад, ба забони дархостшуда тарҷума кун.
+11. Агар матн омехта бошад, забони асосии ҷумлаҳоро интихоб кун.
+12. Агар забон номуайян бошад, бо тоҷикӣ ҷавоб деҳ.
+
+МУҲИМ:
+Забони паёми охирини корбарро муайян кун,
+на забони тамоми таърихи суҳбатро.
 """,
-        "Russian": "Отвечай полностью и грамотно на русском языке.",
-        "English": "Answer entirely and clearly in English.",
-        "Uzbek": "Barcha javoblarni tushunarli va to'liq o'zbek tilida yoz.",
-        "Persian": "تمام پاسخ‌ها را کامل و روان به زبان فارسی بنویس.",
+
+        "Tajik": """
+Танҳо бо забони тоҷикӣ ҷавоб деҳ.
+Ҷавоб равон, фаҳмо ва бе ғалатҳои имлоӣ бошад.
+Агар корбар тарҷума ба забони дигар талаб кунад,
+ба ҳамон забони дархостшуда тарҷума кун.
+""",
+
+        "Russian": """
+Отвечай полностью на русском языке.
+Пиши грамотно, понятно и естественно.
+Если пользователь просит перевод на другой язык,
+переводи на указанный язык.
+""",
+
+        "English": """
+Answer entirely in English.
+Write clearly, correctly and naturally.
+If the user requests a translation into another language,
+translate into the requested language.
+""",
+
+        "Uzbek": """
+Faqat o'zbek tilida javob ber.
+Tushunarli, ravon va grammatik jihatdan to'g'ri yoz.
+Agar foydalanuvchi boshqa tilga tarjima so'rasa,
+so'ralgan tilga tarjima qil.
+""",
+
+        "Persian": """
+فقط به زبان فارسی پاسخ بده.
+روان، دقیق و قابل فهم بنویس.
+اگر کاربر ترجمه به زبان دیگری خواست،
+به همان زبان ترجمه کن.
+""",
     }
 
-    return instructions.get(language, instructions["Tajik"])
+    return instructions.get(language, instructions["Auto"])
 
 
 # ==================================================
@@ -332,32 +407,38 @@ def needs_code_interpreter(text):
 # ==================================================
 
 def get_system_prompt(language):
+
     return f"""
 Ту ёрдамчии зеҳни сунъии касбӣ ҳастӣ.
 
-ВАЗИФАИ ТУ:
+ВАЗИФАҲОИ ТУ:
 
 1. Ба саволҳо дақиқ, дуруст ва фаҳмо ҷавоб деҳ.
 2. Маълумоти сохта ва рақамҳои беасос нанавис.
 3. Агар ҷавобро надонӣ, рост бигӯ.
 4. Барои мавзӯъҳои душвор мисол ва шарҳ пешниҳод кун.
 5. Саволҳои таърихиро бо сана ва далел шарҳ деҳ.
-6. Саволҳои илмиро бо маълумоти илмии боэътимод ҷавоб деҳ.
+6. Саволҳои илмиро бо маълумоти боэътимод ҷавоб деҳ.
 7. Агар савол номуайян бошад, як саволи равшанкунанда пурс.
 8. Матни корбарро бодиққат хон.
 9. Агар корбар код талаб кунад, коди пурра ва коршоям пешниҳод кун.
 10. Агар корбар тарҷума талаб кунад, маънои аслиро нигоҳ дор.
 11. Агар маълумоти нав талаб шавад, аз воситаи ҷустуҷӯ истифода бар.
-12. Агар воситаи ҷустуҷӯ истифода нашавад, вонамуд накун, ки интернетро санҷидаӣ.
+12. Агар интернетро насанҷида бошӣ, вонамуд накун, ки санҷидаӣ.
 13. Ба корбар қадам ба қадам фаҳмон.
 14. Аз такрори зиёдатӣ худдорӣ кун.
-15. Ҳеҷ гоҳ манбаъ ё истиноди сохта насоз.
-16. Агар маълумот номуайян бошад, сатҳи номуайяниро фаҳмон.
+15. Манбаъ ва истиноди сохта нанавис.
+16. Агар маълумот номуайян бошад, инро фаҳмон.
 
-ЗАБОНИ ҶАВОБ:
+ҚОИДАИ ЗАБОН:
+
 {language_instruction(language)}
 
-ҲАМАИ ҚОИДАҲОИ БОЛОРО РИОЯ КУН.
+МУҲИМ:
+Забони паёми охирини корбарро муайян кун.
+Забонҳоро дар як ҷавоб омехта накун.
+
+ҲАМАИ ҚОИДАҲОРО РИОЯ КУН.
 """
 
 
@@ -366,6 +447,7 @@ def get_system_prompt(language):
 # ==================================================
 
 def groq_request(conversation, language, model, tools=None):
+
     messages = [
         {
             "role": "system",
@@ -380,7 +462,6 @@ def groq_request(conversation, language, model, tools=None):
         "messages": messages,
         "max_completion_tokens": 4096,
         "temperature": 0.2,
-        "citation_options": "disabled",
     }
 
     if tools:
@@ -392,10 +473,12 @@ def groq_request(conversation, language, model, tools=None):
     )
 
     message = response.choices[0].message
+
     return (message.content or "").strip()
 
 
 async def ask_groq(conversation, language, model, tools=None):
+
     return await asyncio.to_thread(
         groq_request,
         conversation,
@@ -409,18 +492,29 @@ async def ask_groq(conversation, language, model, tools=None):
 # AI ANSWER WITH FALLBACK
 # ==================================================
 
-async def get_ai_answer(conversation, language, search_web=False, use_code=False):
+async def get_ai_answer(
+    conversation,
+    language,
+    search_web=False,
+    use_code=False
+):
+
     tools = []
 
     if search_web:
-        tools.append({"type": "browser_search"})
+        tools.append({
+            "type": "browser_search"
+        })
 
     if use_code:
-        tools.append({"type": "code_interpreter"})
+        tools.append({
+            "type": "code_interpreter"
+        })
 
     last_error = None
 
     for model in TEXT_MODELS:
+
         try:
             logger.info("Trying AI model: %s", model)
 
@@ -432,22 +526,35 @@ async def get_ai_answer(conversation, language, search_web=False, use_code=False
             )
 
             if answer:
-                logger.info("AI response received from %s", model)
+                logger.info(
+                    "AI response received from %s",
+                    model
+                )
+
                 return answer
 
-            raise RuntimeError("Модел ҷавоби холӣ баргардонд.")
+            raise RuntimeError(
+                "Модел ҷавоби холӣ баргардонд."
+            )
 
         except Exception as error:
+
             last_error = error
-            logger.exception("Model failed: %s", model)
+
+            logger.exception(
+                "Model failed: %s",
+                model
+            )
 
             # Агар Tool Calling хато диҳад,
-            # як маротиба бе воситаҳо такрор мекунем.
+            # бе воситаҳо боз як маротиба месанҷем.
+
             if tools:
+
                 try:
                     logger.warning(
                         "Retrying %s without tools",
-                        model,
+                        model
                     )
 
                     answer = await ask_groq(
@@ -461,12 +568,21 @@ async def get_ai_answer(conversation, language, search_web=False, use_code=False
                         return answer
 
                 except Exception as retry_error:
+
                     last_error = retry_error
-                    logger.exception("Retry without tools failed")
+
+                    logger.exception(
+                        "Retry without tools failed"
+                    )
 
     error_name = (
         type(last_error).__name__
         if last_error else "UnknownError"
+    )
+
+    logger.error(
+        "All AI models failed: %s",
+        last_error
     )
 
     return (
@@ -481,15 +597,18 @@ async def get_ai_answer(conversation, language, search_web=False, use_code=False
 # ==================================================
 
 async def send_long_message(message, text):
+
     if not text:
         text = "❌ Ҷавоб гирифта нашуд."
 
     max_length = 4000
 
     while text:
+
         part = text[:max_length]
 
         if len(text) > max_length:
+
             split_at = part.rfind("\n")
 
             if split_at > 1000:
@@ -507,8 +626,13 @@ async def send_long_message(message, text):
 # START
 # ==================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user = update.effective_user
+
     save_user(user)
 
     keyboard = [
@@ -533,6 +657,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     if user.id == ADMIN_ID:
+
         keyboard.append([
             InlineKeyboardButton(
                 "⚙️ Панели админ",
@@ -558,7 +683,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HELP
 # ==================================================
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     await update.message.reply_text(
         "📚 Фармонҳои бот:\n\n"
         "/start — оғоз\n"
@@ -566,6 +695,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/lang — интихоби забон\n"
         "/help — роҳнамо\n\n"
         "Забонҳо:\n"
+        "/lang auto — муайянкунии автоматӣ\n"
         "/lang tj — тоҷикӣ\n"
         "/lang ru — русӣ\n"
         "/lang en — англисӣ\n"
@@ -578,32 +708,43 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # LANGUAGE COMMAND
 # ==================================================
 
-async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def language_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user_id = update.effective_user.id
 
     if not context.args:
+
         await update.message.reply_text(
             "🌐 Забони дилхоҳро интихоб кун:\n\n"
+            "/lang auto — автоматӣ\n"
             "/lang tj — тоҷикӣ\n"
             "/lang ru — русӣ\n"
             "/lang en — англисӣ\n"
             "/lang uz — ӯзбекӣ\n"
             "/lang fa — форсӣ"
         )
+
         return
 
     code = context.args[0].lower()
+
     language = LANGUAGES.get(code)
 
     if not language:
+
         await update.message.reply_text(
             "❌ Ин забон дастгирӣ намешавад."
         )
+
         return
 
     set_language(user_id, language)
 
     names = {
+        "Auto": "автоматӣ",
         "Tajik": "тоҷикӣ",
         "Russian": "русӣ",
         "English": "англисӣ",
@@ -620,8 +761,13 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # RESET
 # ==================================================
 
-async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reset(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user_id = update.effective_user.id
+
     clear_history(user_id)
 
     await update.message.reply_text(
@@ -634,12 +780,15 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================================================
 
 async def admin_panel(update, context):
+
     query = update.callback_query
 
     if query.from_user.id != ADMIN_ID:
+
         await query.edit_message_text(
             "⛔ Шумо иҷозати админ надоред."
         )
+
         return
 
     count = get_user_count()
@@ -667,10 +816,13 @@ async def admin_panel(update, context):
 
 
 async def admin_command(update, context):
+
     if update.effective_user.id != ADMIN_ID:
+
         await update.message.reply_text(
             "⛔ Шумо иҷозати админ надоред."
         )
+
         return
 
     count = get_user_count()
@@ -702,17 +854,21 @@ async def admin_command(update, context):
 # ==================================================
 
 async def button_handler(update, context):
+
     query = update.callback_query
+
     await query.answer()
 
     data = query.data
 
     if data == "ask":
+
         await query.message.reply_text(
             "✍️ Саволи худро навис."
         )
 
     elif data == "info":
+
         await query.message.reply_text(
             "🤖 Ман бо ёрии Groq кор мекунам.\n\n"
             "Имкониятҳо:\n"
@@ -725,8 +881,10 @@ async def button_handler(update, context):
         )
 
     elif data == "language":
+
         await query.message.reply_text(
             "🌐 Барои иваз кардани забон фармонро истифода бар:\n\n"
+            "/lang auto\n"
             "/lang tj\n"
             "/lang ru\n"
             "/lang en\n"
@@ -735,9 +893,11 @@ async def button_handler(update, context):
         )
 
     elif data == "admin":
+
         await admin_panel(update, context)
 
     elif data == "broadcast":
+
         if query.from_user.id != ADMIN_ID:
             return
 
@@ -752,7 +912,11 @@ async def button_handler(update, context):
 # TEXT HANDLER
 # ==================================================
 
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def text_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user = update.effective_user
     message = update.message
 
@@ -763,17 +927,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # ------------------------------
+    # ----------------------------------------------
     # ADMIN BROADCAST
-    # ------------------------------
+    # ----------------------------------------------
 
     if (
         context.user_data.get("broadcast_mode")
         and user.id == ADMIN_ID
     ):
+
         context.user_data["broadcast_mode"] = False
 
         users = get_users()
+
         sent = 0
         failed = 0
 
@@ -782,14 +948,18 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         for user_id in users:
+
             try:
+
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=text,
                 )
+
                 sent += 1
 
             except Exception:
+
                 failed += 1
 
             await asyncio.sleep(0.05)
@@ -799,22 +969,23 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📨 Фиристода шуд: {sent}\n"
             f"❌ Нарафт: {failed}"
         )
+
         return
 
-    # ------------------------------
+    # ----------------------------------------------
     # LANGUAGE
-    # ------------------------------
+    # ----------------------------------------------
 
     requested_language = detect_requested_language(text)
 
     if requested_language:
-        set_language(user.id, requested_language)
+        language = requested_language
+    else:
+        language = get_language(user.id)
 
-    language = get_language(user.id)
-
-    # ------------------------------
+    # ----------------------------------------------
     # HISTORY
-    # ------------------------------
+    # ----------------------------------------------
 
     history = get_history(user.id)
 
@@ -825,21 +996,26 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     history = history[-MAX_HISTORY_MESSAGES:]
 
-    # ------------------------------
+    # ----------------------------------------------
     # TOOLS
-    # ------------------------------
+    # ----------------------------------------------
 
     search_web = needs_web_search(text)
+
     use_code = needs_code_interpreter(text)
+
+    # ----------------------------------------------
+    # TYPING
+    # ----------------------------------------------
 
     await context.bot.send_chat_action(
         chat_id=message.chat_id,
         action=ChatAction.TYPING,
     )
 
-    # ------------------------------
+    # ----------------------------------------------
     # AI
-    # ------------------------------
+    # ----------------------------------------------
 
     answer = await get_ai_answer(
         history,
@@ -848,12 +1024,20 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         use_code,
     )
 
+    # ----------------------------------------------
+    # SAVE HISTORY
+    # ----------------------------------------------
+
     history.append({
         "role": "assistant",
         "content": answer,
     })
 
     save_history(user.id, history)
+
+    # ----------------------------------------------
+    # SEND ANSWER
+    # ----------------------------------------------
 
     await send_long_message(
         message,
@@ -865,20 +1049,27 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # IMAGE HANDLER
 # ==================================================
 
-async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def image_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     user = update.effective_user
+
     message = update.message
 
     save_user(user)
 
     caption = (message.caption or "").strip()
+
+    # Забони интихобшудаи корбар
     language = get_language(user.id)
 
+    # Агар корбар дар зери акс забони дигар талаб кунад
     requested_language = detect_requested_language(caption)
 
     if requested_language:
         language = requested_language
-        set_language(user.id, language)
 
     if not caption:
         caption = "Ин аксро бодиққат таҳлил кун."
@@ -889,13 +1080,19 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+
         photo = message.photo[-1]
 
-        if photo.file_size and photo.file_size > MAX_IMAGE_SIZE:
+        if (
+            photo.file_size
+            and photo.file_size > MAX_IMAGE_SIZE
+        ):
+
             await message.reply_text(
                 "❌ Ҳаҷми акс аз ҳад зиёд аст. "
                 "Лутфан акси хурдтар фирист."
             )
+
             return
 
         telegram_file = await context.bot.get_file(
@@ -924,6 +1121,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     + language_instruction(language)
                 ),
             },
+
             {
                 "role": "user",
                 "content": [
@@ -931,6 +1129,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "type": "text",
                         "text": caption,
                     },
+
                     {
                         "type": "image_url",
                         "image_url": {
@@ -942,14 +1141,21 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         last_error = None
+
         answer = None
 
         for model in VISION_MODELS:
+
             try:
-                logger.info("Trying vision model: %s", model)
+
+                logger.info(
+                    "Trying vision model: %s",
+                    model
+                )
 
                 response = await asyncio.to_thread(
-                    lambda current_model=model: groq_client.chat.completions.create(
+                    lambda current_model=model:
+                    groq_client.chat.completions.create(
                         model=current_model,
                         messages=messages,
                         max_completion_tokens=2048,
@@ -965,13 +1171,16 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
 
             except Exception as error:
+
                 last_error = error
+
                 logger.exception(
                     "Vision model failed: %s",
-                    model,
+                    model
                 )
 
         if not answer:
+
             raise last_error or RuntimeError(
                 "Ҳеҷ модели таҳлили акс ҷавоб надод."
             )
@@ -982,7 +1191,10 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except Exception as error:
-        logger.exception("Image analysis failed")
+
+        logger.exception(
+            "Image analysis failed"
+        )
 
         await message.reply_text(
             "❌ Аксро таҳлил карда натавонистам.\n\n"
@@ -996,6 +1208,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================================================
 
 async def other_media_handler(update, context):
+
     await update.message.reply_text(
         "📎 Ҳоло ман матн ва аксро қабул карда метавонам.\n"
         "Лутфан матн ё акс фирист."
@@ -1007,6 +1220,7 @@ async def other_media_handler(update, context):
 # ==================================================
 
 async def error_handler(update, context):
+
     logger.error(
         "Telegram application error",
         exc_info=context.error,
@@ -1018,6 +1232,7 @@ async def error_handler(update, context):
 # ==================================================
 
 def main():
+
     init_db()
 
     application = (
@@ -1074,12 +1289,23 @@ def main():
         )
     )
 
-    application.add_error_handler(error_handler)
+    application.add_error_handler(
+        error_handler
+    )
 
     logger.info("AI Telegram bot started!")
+
     logger.info("AI provider: Groq")
-    logger.info("Text models: %s", TEXT_MODELS)
-    logger.info("Vision models: %s", VISION_MODELS)
+
+    logger.info(
+        "Text models: %s",
+        TEXT_MODELS
+    )
+
+    logger.info(
+        "Vision models: %s",
+        VISION_MODELS
+    )
 
     application.run_polling(
         drop_pending_updates=True,
