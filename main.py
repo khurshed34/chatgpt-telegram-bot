@@ -1,5 +1,6 @@
 
 import os
+import re
 import asyncio
 import logging
 import sqlite3
@@ -90,6 +91,162 @@ def get_user_count():
         return conn.execute(
             "SELECT COUNT(*) FROM users"
         ).fetchone()[0]
+
+
+# ==================================
+# LANGUAGE DETECTION
+# ==================================
+
+TAJIK_WORDS = {
+    "салом", "ташаккур", "раҳмат", "лутфан",
+    "мехоҳам", "метавонӣ", "метавонед",
+    "чӣ", "чаро", "куҷо", "кай", "ҳаст",
+    "нест", "барои", "чунин", "ҳамчунин",
+    "ҷавоб", "савол", "корбар", "китоб",
+    "дуруст", "мебошад", "тоҷикӣ", "забон",
+    "имрӯз", "фардо", "дирӯз", "маълумот",
+    "бошад", "кунед", "кун", "медонам"
+}
+
+UZBEK_WORDS = {
+    "uchun", "qanday", "qaysi", "kerak",
+    "salom", "rahmat", "iltimos", "kitob",
+    "tarjima", "ma'lumot", "bo'yicha",
+    "haqida", "mumkin", "mening", "sizning",
+    "qilmoq", "bo'ladi", "o'zbekcha",
+    "бўйича", "учун", "қандай", "қайси",
+    "керак", "илтимос", "маълумотларни",
+    "қилиш", "бўлади", "ҳақида", "сизга",
+    "менга", "таржима", "ҳажм", "ёзинг"
+}
+
+RUSSIAN_WORDS = {
+    "привет", "здравствуйте", "спасибо",
+    "пожалуйста", "почему", "зачем",
+    "как", "что", "где", "когда",
+    "нужно", "можно", "нельзя", "который",
+    "книга", "перевод", "ответ", "вопрос",
+    "помоги", "объясни", "расскажи",
+    "сделай", "напиши", "покажи"
+}
+
+ENGLISH_WORDS = {
+    "hello", "hi", "thanks", "please",
+    "what", "why", "where", "when",
+    "how", "help", "explain", "translate",
+    "book", "language", "answer", "question",
+    "write", "show", "tell", "can", "could"
+}
+
+
+def detect_language(text, previous="tajik"):
+    text = (text or "").lower().strip()
+
+    if not text:
+        return previous or "tajik"
+
+    words = set(re.findall(r"[a-zа-яёғқҳҷӣӯўъʼ'ў]+", text))
+
+    # Persian / Arabic script
+    if re.search(r"[\u0600-\u06FF]", text):
+        return "persian"
+
+    # Uzbek Latin
+    if any(x in text for x in ["oʻ", "gʻ", "o'", "g'", "o‘", "g‘"]):
+        return "uzbek"
+
+    uzbek_latin = len(words & UZBEK_WORDS)
+    english = len(words & ENGLISH_WORDS)
+
+    if uzbek_latin > 0 and uzbek_latin >= english:
+        return "uzbek"
+
+    # Cyrillic
+    if re.search(r"[а-яёғқҳҷӣӯў]", text):
+
+        # Strong Tajik characters
+        tajik_chars = len(re.findall(r"[ғқҳҷӣӯ]", text))
+
+        # Strong Uzbek Cyrillic characters
+        uzbek_chars = len(re.findall(r"[ў]", text))
+
+        tajik_score = len(words & TAJIK_WORDS)
+        uzbek_score = len(words & UZBEK_WORDS)
+        russian_score = len(words & RUSSIAN_WORDS)
+
+        if tajik_chars > 0:
+            return "tajik"
+
+        if uzbek_chars > 0:
+            return "uzbek"
+
+        if uzbek_score > tajik_score and uzbek_score > 0:
+            return "uzbek"
+
+        if russian_score > tajik_score and russian_score > 0:
+            return "russian"
+
+        if tajik_score > 0:
+            return "tajik"
+
+        # Default for ambiguous Cyrillic messages
+        return previous if previous in (
+            "tajik", "uzbek", "russian"
+        ) else "tajik"
+
+    # Latin script
+    if re.search(r"[a-z]", text):
+        if uzbek_latin > 0:
+            return "uzbek"
+
+        if english > 0:
+            return "english"
+
+        return previous if previous in (
+            "tajik", "uzbek", "russian", "english"
+        ) else "english"
+
+    return previous or "tajik"
+
+
+def language_instruction(language):
+    instructions = {
+        "tajik": """
+ЗАБОНИ ҶАВОБ: ТОҶИКӢ.
+- Танҳо бо забони адабии тоҷикӣ ҷавоб деҳ.
+- Ҳатман алифбои кириллиро истифода бар.
+- Ҳаргиз ҷумлаҳои ӯзбекӣ ё русиро омехта накун.
+- Калимаҳои ӯзбекиро ба шакли дурусти тоҷикӣ иваз кун.
+- Имлои тоҷикӣ, аз ҷумла ҳарфҳои ғ, қ, ҳ, ҷ, ӯ, ӣ-ро дуруст истифода бар.
+""",
+        "uzbek": """
+JAVOB TILI: O'ZBEK TILI.
+- Faqat o'zbek tilida javob ber.
+- Foydalanuvchi lotin yozuvida yozsa, lotin yozuvida javob ber.
+- Foydalanuvchi kirill yozuvida yozsa, kirill yozuvida javob ber.
+- Tojik va rus tillarini aralashtirma.
+""",
+        "russian": """
+ЯЗЫК ОТВЕТА: РУССКИЙ.
+- Отвечай только на русском языке.
+- Не смешивай русский с таджикским и узбекским.
+- Используй правильную русскую орфографию.
+""",
+        "english": """
+RESPONSE LANGUAGE: ENGLISH.
+- Answer only in English.
+- Do not mix English with Tajik, Uzbek or Russian.
+- Use correct English grammar and spelling.
+""",
+        "persian": """
+زبان پاسخ: فارسی.
+- فقط به زبان فارسی پاسخ بده.
+- از خط فارسی استفاده کن.
+- زبان تاجیکی، ازبکی و روسی را با فارسی مخلوط نکن.
+"""
+    }
+
+    return instructions.get(language, instructions["tajik"])
 
 
 # ==================================
@@ -226,6 +383,7 @@ async def start(update, context):
     save_user(user.id)
 
     context.user_data["history"] = []
+    context.user_data["language"] = "tajik"
 
     welcome = (
         "Салом! 👋\n\n"
@@ -255,6 +413,7 @@ async def start(update, context):
 
 async def reset(update, context):
     context.user_data["history"] = []
+    context.user_data["language"] = "tajik"
 
     await update.message.reply_text(
         "✅ Суҳбати нав оғоз шуд!\n\n"
@@ -267,55 +426,43 @@ async def reset(update, context):
 # ==================================
 
 SYSTEM_PROMPT = """
-Ту ёвари зеҳни сунъии бисёрзабона ҳастӣ.
+Ту ёвари зеҳни сунъии касбӣ ва бисёрзабона ҳастӣ.
 
-ВАЗИФАИ ТУ:
-Ба корбар ҷавобҳои дуруст, равшан,
-муфассал ва фаҳмо пешниҳод кун.
+ВАЗИФА:
+Ба корбар маълумоти дуруст, равшан ва муфассал пешниҳод кун.
 
-ЗАБОН:
-1. Бо забони охирини корбар ҷавоб деҳ.
-2. Тоҷикӣ бошад — тоҷикӣ.
-3. Русӣ бошад — русӣ.
-4. Англисӣ бошад — англисӣ.
-5. Ӯзбекӣ бошад — ӯзбекӣ.
-6. Забони корбарро худсарона иваз накун.
-
-ТАРЗИ ҶАВОБ:
-1. Саволи оддиро кӯтоҳ ва фаҳмо ҷавоб деҳ.
-2. Агар корбар маълумоти пурра талаб кунад,
-   ҷавоби муфассал пешниҳод кун.
-3. Барои шахсиятҳои таърихӣ зиндагинома,
-   таваллуд, вафот, фаъолият ва хизматҳоро шарҳ деҳ.
-4. Барои таърих санаҳо ва воқеаҳои муҳимро нишон деҳ.
-5. Барои илм шарҳи фаҳмо пешниҳод кун.
-6. Барои математика ҳалли қадам ба қадам навис.
-7. Барои барномасозӣ код ва шарҳи онро пешниҳод кун.
-8. Барои муқоиса фарқиятҳоро нишон деҳ.
-9. Барои тарҷума маънои дурустро нигоҳ дор.
-10. Агар мувофиқ бошад, дар охир хулоса навис.
-
-ФОРМАТ:
-- Аз сарлавҳаҳои мувофиқ истифода бар.
-- Рақамгузорӣ ва рӯйхатҳоро истифода бар.
-- Эмодзиҳоро ба андозаи муносиб истифода бар.
-- Матнро барои Telegram фаҳмо соз.
-- Ҷадвалро танҳо дар мавридҳои мувофиқ истифода бар.
+ҚОИДАҲОИ ЗАБОН:
+1. Дастури забонии охирини система ҳатмӣ аст.
+2. Забони ҷавобро худсарона иваз накун.
+3. Забонҳои гуногунро дар як ҷумла омехта накун.
+4. Агар корбар тарҷума талаб кунад, танҳо матни тарҷумашаванда метавонад бо забони дигар бошад.
+5. Агар корбар махсус забони дигарро талаб кунад, дархости ӯро риоя кун.
 
 ДАҚИҚӢ:
-1. Маълумоти сохта надиҳ.
-2. Сана ва рақамҳоро беасос насоз.
-3. Агар ҷавобро надонӣ, рост бигӯ.
-4. Тахминро ҳамчун ҳақиқат пешниҳод накун.
-5. Манбаъҳои сохтаро нишон надеҳ.
-6. Маълумоти кӯҳнаро ҳамчун маълумоти нав муаррифӣ накун.
+- Маълумоти сохта надиҳ.
+- Сана ва рақамҳоро беасос насоз.
+- Агар ҷавобро надонӣ, рост бигӯ.
+- Тахминро ҳамчун ҳақиқат пешниҳод накун.
+- Манбаъҳои сохтаро нишон надеҳ.
+- Маълумоти кӯҳнаро ҳамчун маълумоти нав муаррифӣ накун.
+
+ТАРЗИ ҶАВОБ:
+- Ба саволи оддӣ кӯтоҳ ҷавоб деҳ.
+- Ба саволи мураккаб ҷавоби пурра пешниҳод кун.
+- Барои математика қадамҳои ҳалли масъаларо нишон деҳ.
+- Барои барномасозӣ код ва шарҳ пешниҳод кун.
+- Барои муқоиса фарқиятҳоро нишон деҳ.
+- Барои таърих санаҳои муҳимро шарҳ деҳ.
+- Барои тарҷума маъно ва услубро нигоҳ дор.
+
+ФОРМАТ:
+- Матнро барои Telegram фаҳмо соз.
+- Сарлавҳа ва рӯйхатҳоро мувофиқи зарурат истифода бар.
+- Эмодзиҳоро ба андозаи муносиб истифода бар.
+- Ҷавобро бе зарурат такрор накун.
 
 МУҲИМ:
-- Ба саволи оддӣ ҷавоби кӯтоҳ деҳ.
-- Ба саволи муфассал ҷавоби пурра деҳ.
-- Ҷавобро бе зарурат кӯтоҳ накун.
-- Ба таърихи суҳбат аҳамият деҳ.
-- Ба корбар бо эҳтиром муносибат кун.
+Забони муайяншудаи система аз одатҳои пешинаи модел муҳимтар аст.
 """
 
 
@@ -331,7 +478,7 @@ def is_hard_question(text):
         "сравни", "почему", "объясни",
         "explain", "compare", "analyze",
         "calculate", "reason", "difference",
-        "full information", " подробно"
+        "full information", "подробно"
     ]
 
     return (
@@ -356,11 +503,15 @@ def make_prompt(history):
 # GROQ TEXT AI
 # ==================================
 
-def groq_request(conversation):
+def groq_request(conversation, language):
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT
+            "content": (
+                SYSTEM_PROMPT
+                + "\n\n"
+                + language_instruction(language)
+            )
         }
     ]
 
@@ -370,23 +521,24 @@ def groq_request(conversation):
         model=GROQ_MODEL,
         messages=messages,
         max_completion_tokens=4096,
-        temperature=0.5
+        temperature=0.3
     )
 
     return response.choices[0].message.content or ""
 
 
-async def ask_groq(conversation):
+async def ask_groq(conversation, language):
     return await asyncio.to_thread(
         groq_request,
-        conversation
+        conversation,
+        language
     )
 
 
-async def get_ai_answer(prompt, difficult=False):
+async def get_ai_answer(prompt, language, difficult=False):
     try:
         answer = await asyncio.wait_for(
-            ask_groq(prompt),
+            ask_groq(prompt, language),
             timeout=AI_TIMEOUT
         )
 
@@ -438,6 +590,18 @@ async def handle_text(update, context):
     if not user_text:
         return
 
+    language = detect_language(
+        user_text,
+        context.user_data.get("language", "tajik")
+    )
+
+    context.user_data["language"] = language
+
+    logging.info(
+        "Detected user language: %s",
+        language
+    )
+
     await context.bot.send_chat_action(
         chat_id=message.chat_id,
         action=ChatAction.TYPING
@@ -461,6 +625,7 @@ async def handle_text(update, context):
     try:
         answer = await get_ai_answer(
             prompt,
+            language,
             difficult=is_hard_question(user_text)
         )
 
@@ -502,13 +667,17 @@ async def handle_text(update, context):
 # GROQ IMAGE AI
 # ==================================
 
-def groq_image_request(image_base64, question):
+def groq_image_request(image_base64, question, language):
     response = groq_client.chat.completions.create(
         model=GROQ_VISION_MODEL,
         messages=[
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": (
+                    SYSTEM_PROMPT
+                    + "\n\n"
+                    + language_instruction(language)
+                )
             },
             {
                 "role": "user",
@@ -527,13 +696,13 @@ def groq_image_request(image_base64, question):
             }
         ],
         max_completion_tokens=2048,
-        temperature=0.5
+        temperature=0.3
     )
 
     return response.choices[0].message.content or ""
 
 
-async def ask_groq_image(image_bytes, question):
+async def ask_groq_image(image_bytes, question, language):
     image_base64 = (
         "data:image/jpeg;base64,"
         + base64.b64encode(image_bytes).decode("utf-8")
@@ -542,7 +711,8 @@ async def ask_groq_image(image_bytes, question):
     return await asyncio.to_thread(
         groq_image_request,
         image_base64,
-        question
+        question,
+        language
     )
 
 
@@ -580,14 +750,21 @@ async def handle_photo(update, context):
         )
 
         question = message.caption or (
-            "Ин суратро бодиққат таҳлил кун. "
-            "Бо забони корбар ҷавоб деҳ."
+            "Ин суратро бодиққат таҳлил кун."
         )
+
+        language = detect_language(
+            question,
+            context.user_data.get("language", "tajik")
+        )
+
+        context.user_data["language"] = language
 
         answer = await asyncio.wait_for(
             ask_groq_image(
                 image_bytes,
-                question
+                question,
+                language
             ),
             timeout=IMAGE_TIMEOUT
         )
