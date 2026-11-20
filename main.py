@@ -486,7 +486,6 @@ def groq_request(conversation, language, search_web=False):
         logging.info("Groq browser search enabled")
         request_options["tools"] = [{"type": "browser_search"}]
         request_options["tool_choice"] = "required"
-        request_options["citation_options"] = "enabled"
 
     response = groq_client.chat.completions.create(**request_options)
     answer = response.choices[0].message.content or ""
